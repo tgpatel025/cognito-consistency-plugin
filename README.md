@@ -53,18 +53,27 @@ src/
     replay.py             # replay failed sync events, with retry limits (--report shows stuck entries)
     scheduled_handler.py  # Lambda entry point for scheduled (EventBridge) runs, publishes CloudWatch metrics
   common/
-    db.py                 # Postgres access layer (upsert, audit log, dead letters, Secrets Manager or plaintext env creds)
+    db.py                 # connection/credential logic only (Secrets Manager or plaintext env vars)
+    sync_service.py        # orchestration layer: audit-failure isolation, wraps any UserRepository
+    service_factory.py     # decides which UserRepository to construct (default Postgres, or REPOSITORY_CLASS)
+    repositories/
+      base.py               # UserRepository -- the interface everything else depends on
+      postgres.py            # reference implementation, matches infra/localstack/schema.sql
+      example_custom_schema.py  # worked example against a differently-shaped, pre-existing schema
 infra/
   terraform/module/       # reusable Terraform module -- attach to an EXISTING Cognito pool + database (see its README)
   localstack/              # local demo environment (LocalStack + Postgres, no AWS account needed)
 docs/
   architecture.md         # design decisions and trade-offs
+  extending-the-repository.md  # guide to plugging in your own schema/database engine
   market-context.md       # honest write-up of the commercial validation behind this
   local-demo.md            # step-by-step guide to running the demo locally
 tests/
   test_drift.py                     # unit tests for the reconciliation engine
   test_lambda_handlers.py           # Lambda handlers never raise, even under total DB outage
-  test_upsert_failure_isolation.py  # audit-log failures never mask a successful primary write
+  test_sync_service.py               # audit-log failures never mask a successful primary write
+  test_repository_interface.py       # both shipped repositories satisfy the UserRepository contract
+  test_service_factory.py            # default vs. custom repository loading via REPOSITORY_CLASS
   test_replay_retry_logic.py        # dead-letter retry-limit / poison-pill logic
   test_scheduled_handler.py         # CloudWatch metric publishing
   test_db_credentials.py            # Secrets Manager vs. plaintext env var credential paths
@@ -144,6 +153,10 @@ A few decisions worth calling out (fully explained in
   business data automatically is judged too risky to automate.
 - All writes are **idempotent** (upsert on the immutable Cognito `sub`),
   so retries and replays are always safe.
+- The database layer is an **interface** (`UserRepository`), not a fixed
+  schema — bring your own `users` table, your own columns, even your own
+  database engine. See
+  [`docs/extending-the-repository.md`](docs/extending-the-repository.md).
 
 ## License
 

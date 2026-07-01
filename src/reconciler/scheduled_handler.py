@@ -5,14 +5,17 @@ Entry point used when the reconciler runs as a scheduled Lambda
 Kept as a thin wrapper around run.py's logic so the same reconciliation
 code path is used whether it's invoked locally, in CI, or in AWS.
 
+Storage: depends on SyncService, not on any specific database directly
+-- see docs/extending-the-repository.md.
+
 Alerting
 --------
 Drift counts are published as a CloudWatch custom metric
 (namespace: CognitoConsistencyPlatform, metric: DriftCount, broken down
 by drift type via a dimension). This is what makes drift *alarmable*
 rather than something a human has to remember to check logs for --
-see infra/terraform/alerting.tf for the CloudWatch Alarm + SNS topic
-that watches this metric.
+see infra/terraform/module/alerting.tf for the CloudWatch Alarm + SNS
+topic that watches this metric.
 
 A metric was chosen over parsing log lines because it's structured,
 cheap, and gives you a real time series to graph (e.g. "drift count over
@@ -25,7 +28,7 @@ import logging
 import boto3
 
 from reconciler.run import fetch_all_cognito_users
-from common.db import get_all_app_users
+from common.service_factory import build_sync_service
 from reconciler.drift import find_drift, summarize, DriftType
 
 logger = logging.getLogger()
@@ -74,8 +77,10 @@ def publish_drift_metrics(summary: dict):
 def handler(event, context):
     user_pool_id = os.environ["USER_POOL_ID"]
 
+    sync_service = build_sync_service()
+
     cognito_users = fetch_all_cognito_users(user_pool_id)
-    db_users = get_all_app_users()
+    db_users = sync_service.get_all_users()
 
     drift_records = find_drift(cognito_users, db_users)
     summary = summarize(drift_records)
@@ -84,9 +89,9 @@ def handler(event, context):
     publish_drift_metrics(summary)
 
     # This scheduled path deliberately only *reports* -- the CloudWatch
-    # Alarm defined in infra/terraform/alerting.tf is what turns this
-    # metric into a notification. Auto-fixing on every scheduled run
-    # without operator visibility would defeat the purpose of having an
-    # auditable reconciliation trail. Use the CLI's --fix flag for an
+    # Alarm defined in infra/terraform/module/alerting.tf is what turns
+    # this metric into a notification. Auto-fixing on every scheduled
+    # run without operator visibility would defeat the purpose of having
+    # an auditable reconciliation trail. Use the CLI's --fix flag for an
     # explicit, operator-initiated repair.
     return {"summary": summary, "drift_count": len(drift_records)}

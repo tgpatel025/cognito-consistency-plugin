@@ -8,14 +8,21 @@ attribute refresh) but the app DB was never told.
 
 Same failure-handling philosophy as post_confirmation: never block the
 auth flow, always leave a trail if the sync fails.
+
+Storage: depends on SyncService, not on any specific database directly
+-- see post_confirmation/handler.py's docstring and
+docs/extending-the-repository.md for how to point this at your own
+schema.
 """
 
 import logging
 
-from common.db import upsert_user, enqueue_dead_letter, log_sync_event
+from common.service_factory import build_sync_service
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+_sync_service = build_sync_service()
 
 
 def handler(event, context):
@@ -28,7 +35,7 @@ def handler(event, context):
     username = event.get("userName")
 
     try:
-        upsert_user(
+        _sync_service.sync_user(
             cognito_sub=cognito_sub,
             email=email,
             username=username,
@@ -38,16 +45,13 @@ def handler(event, context):
     except Exception as exc:
         logger.error("Failed to sync user %s on sign-in: %s", cognito_sub, exc)
         # See post_confirmation/handler.py for why this inner try/except
-        # exists: these are DB calls too, so they can fail for the same
-        # reason upsert_user just did. They must never be allowed to
-        # propagate and block the user's sign-in.
+        # exists: these go through the same repository, so they can fail
+        # for the same reason sync_user just did. They must never be
+        # allowed to propagate and block the user's sign-in.
         try:
-            enqueue_dead_letter(cognito_sub=cognito_sub, payload=attributes, error=exc)
-            log_sync_event(
-                cognito_sub=cognito_sub,
-                event_source="post_authentication",
-                status="failure",
-                detail=str(exc),
+            _sync_service.enqueue_dead_letter(cognito_sub=cognito_sub, payload=attributes, error=exc)
+            _sync_service.log_failure(
+                cognito_sub=cognito_sub, event_source="post_authentication", detail=str(exc),
             )
         except Exception as inner_exc:
             logger.critical(

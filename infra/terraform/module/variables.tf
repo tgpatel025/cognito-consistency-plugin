@@ -29,7 +29,7 @@ variable "cognito_user_pool_id" {
 }
 
 variable "attach_post_confirmation_trigger" {
-  description = "Whether to wire post_confirmation as this User Pool's Post Confirmation Lambda trigger. Set to false if you already have a Post Confirmation trigger and want to invoke this module's logic from within your own handler instead (see docs/integration.md)."
+  description = "Whether to wire post_confirmation as this User Pool's Post Confirmation Lambda trigger. Set to false if you already have a Post Confirmation trigger and want to invoke this module's logic from within your own handler instead (see this module's README.md)."
   type        = bool
   default     = true
 }
@@ -46,6 +46,18 @@ variable "attach_post_authentication_trigger" {
 variable "db_secret_arn" {
   description = "ARN of a Secrets Manager secret containing DB connection details (expects JSON keys: host, port, dbname, username, password). This module's Lambdas are granted secretsmanager:GetSecretValue on exactly this ARN -- nothing broader."
   type        = string
+}
+
+variable "repository_class" {
+  description = "Dotted path 'module.path:ClassName' to a custom UserRepository implementation (see src/common/repositories/base.py and docs/extending-the-repository.md). Leave empty to use the default PostgresUserRepository, matching infra/localstack/schema.sql. Your custom module must be bundled into the Lambda deployment package alongside src/ (see scripts/build_lambda_deps.sh for the pattern used for third-party dependencies)."
+  type        = string
+  default     = ""
+}
+
+variable "additional_iam_policy_json" {
+  description = "Extra IAM policy JSON (as produced by data.aws_iam_policy_document) attached to ALL THREE Lambda roles, for permissions your custom UserRepository needs that this module can't predict -- e.g. dynamodb:PutItem/GetItem if your repository talks to DynamoDB instead of Postgres via Secrets Manager. Leave empty (default) if your repository only needs the secretsmanager:GetSecretValue permission already granted."
+  type        = string
+  default     = ""
 }
 
 # ---------------------------------------------------------------------------

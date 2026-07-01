@@ -24,6 +24,8 @@ for why.
 | `cognito_user_pool_arn` / `cognito_user_pool_id` | Your existing User Pool |
 | `db_secret_arn` | A Secrets Manager secret with `{host, port, dbname, username, password}` for your existing database |
 | `vpc_config` (optional) | Subnet + security group IDs, if your database requires VPC placement |
+| `repository_class` (optional) | Dotted path to a custom `UserRepository` implementation if your schema differs from the default (see [`docs/extending-the-repository.md`](../../../docs/extending-the-repository.md)) |
+| `additional_iam_policy_json` (optional) | Extra IAM permissions your custom repository needs beyond Secrets Manager (e.g. DynamoDB access) |
 
 ## Usage
 

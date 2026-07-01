@@ -109,10 +109,11 @@ than correcting a stale email address, and is left to a human decision.
 
 ### 4. Everything writes an audit trail, on both success and failure
 
-`sync_audit_log` is append-only and records every sync attempt — this is
+The audit trail is append-only and records every sync attempt — this is
 the "auditability" piece that regulated environments (HealthTech,
 FinTech, GovTech) actually care about, more so than the sync mechanism
-itself. See `common/db.py::log_sync_event`.
+itself. See `UserRepository.log_sync_event` (decision #9, below, covers
+why this is an interface method rather than a fixed table).
 
 ### 5. Idempotency via upsert on `cognito_sub`
 
@@ -122,32 +123,38 @@ immutable `cognito_sub`, so re-processing an event is a no-op change, not
 a duplicate row.
 
 **Why the audit write is separate from, and cannot affect, the primary
-write**: `upsert_user()` writes to `app_users` and then calls
-`log_sync_event()` as a *second*, independent transaction (see
-`common/db.py`). This is intentional, not an oversight: `sync_audit_log`
-is a record *about* `app_users`, and a less-critical record should never
-be able to veto a more-critical write. Wrapping both in one shared
-transaction would mean a full audit-table disk, a misbehaving trigger,
-or any other audit-side problem could roll back a successful user sync
-— exactly backwards from what you want.
+write**: `SyncService.sync_user()` (`common/sync_service.py`) calls the
+repository's `upsert_user()` and then, separately, `log_sync_event()`.
+These are independent operations, potentially independent transactions
+depending on the repository implementation. This is intentional, not an
+oversight: the audit log is a record *about* the user record, and a
+less-critical record should never be able to veto a more-critical write.
+Wrapping both in one shared transaction would mean a full audit-table
+disk, a misbehaving trigger, or any other audit-side problem could roll
+back a successful user sync — exactly backwards from what you want.
 
-The corollary, which the code enforces explicitly: if the audit write
-fails after the `app_users` write has already committed, `upsert_user()`
-still returns success and does not raise. The failure is logged loudly
-(so the compliance gap is visible in CloudWatch), but it's not allowed to
+The corollary, which `SyncService` enforces explicitly: if the audit
+write fails after the upsert has already succeeded, `sync_user()` still
+returns success and does not raise. The failure is logged loudly (so the
+compliance gap is visible in CloudWatch), but it's not allowed to
 propagate back to the caller and be mistaken for a sync failure — that
 would risk a Lambda handler enqueueing an unnecessary dead letter for a
-write that actually succeeded. See `tests/test_upsert_failure_isolation.py`
-for the explicit case (audit write fails, primary write is still
-reported as successful) and its counterpart (primary write fails, audit
-log is never even attempted for a nonexistent row).
+write that actually succeeded. See `tests/test_sync_service.py` for the
+explicit case (audit write fails, primary write is still reported as
+successful) and its counterpart (primary write fails, audit log is never
+even attempted).
 
-**Remaining gap**: because the two writes aren't atomic, there's a
-narrow window — the Lambda being frozen or killed between the `app_users`
-commit and the `log_sync_event` call — where the audit trail permanently
-under-reports relative to `app_users`, with no automatic way to detect or
-backfill it. This is judged an acceptable residual risk for a demo (a
-single function call is a small window), but a stricter guarantee would
+This guarantee is enforced once, in `SyncService`, rather than inside
+every repository implementation — see decision #9 for why that
+placement matters.
+
+**Remaining gap**: in `PostgresUserRepository`, the user-record write and
+the audit-log write are two separate transactions (two separate
+`db_cursor()` calls). There's a narrow window — the Lambda being frozen
+or killed between the two calls — where the audit trail permanently
+under-reports relative to the user table, with no automatic way to
+detect or backfill it. This is judged an acceptable residual risk for a
+demo (a single function call is a small window), but a stricter guarantee would
 need either a transactional outbox (write the intended audit event in
 the *same* transaction as `app_users`, as a row in an outbox table, then
 have a separate process publish it to `sync_audit_log`) or deriving audit
@@ -251,6 +258,57 @@ just to make a from-scratch demo path work, that path was removed.
 [`infra/localstack`](../infra/localstack) is the demo path instead —
 it exercises the same sync/reconciliation code without needing any real
 AWS resources, let alone ones this module would have to help create.
+
+### 9. The database layer is an interface, not a fixed schema
+
+Everything up to this point still assumed one specific Postgres schema
+(`app_users` / `sync_audit_log` / `sync_dead_letters`) baked directly
+into raw SQL inside `common/db.py`. That's the same mistake the
+Terraform module used to make with its own Cognito pool and RDS
+instance (decision #8) — a real adopter already has a `users` table,
+almost certainly with different columns, a different primary key, and
+possibly a different database engine entirely. Requiring them to adopt
+this project's exact schema would make it a migration, not a library.
+
+The fix follows the same shape: `common/repositories/base.py` defines
+`UserRepository`, an abstract interface covering exactly the operations
+the rest of the codebase needs (`upsert_user`, `get_all_users`,
+`log_sync_event`, and the dead-letter/replay methods). Every Lambda
+handler, the reconciler, and replay now depend on this interface via
+`SyncService` (`common/sync_service.py`) — never on
+`PostgresUserRepository` or any specific schema directly.
+
+`PostgresUserRepository` (`common/repositories/postgres.py`) is the
+reference implementation, matching the schema this project ships with.
+`ExampleCustomSchemaRepository`
+(`common/repositories/example_custom_schema.py`) is a second, worked
+implementation against a deliberately different, realistic pre-existing
+schema (different table name, integer PK instead of `cognito_sub` as
+key, generic `event_log`/`failed_jobs` tables reused instead of
+dedicated ones) — proving the interface is genuinely schema-agnostic,
+not just a rename of the same three tables.
+
+**Where cross-cutting behavior lives**: some logic — like audit-log
+failures never masking a successful upsert (decision on failure
+isolation, above) — is a property of *how syncing should work*, not of
+any specific SQL. That lives once in `SyncService`, wrapping whatever
+repository is configured, rather than being re-implemented (and
+potentially gotten wrong) inside every custom repository someone writes.
+A custom `UserRepository` only needs to get its own storage calls right;
+the orchestration around them is already correct.
+
+**Configuration**: which repository is used is decided by
+`common/service_factory.py`, via the `REPOSITORY_CLASS` environment
+variable (`"module.path:ClassName"`), or the Terraform module's
+`repository_class` variable. Defaults to `PostgresUserRepository` if
+unset, so the LocalStack demo and a fresh clone work with zero
+configuration.
+
+**Trade-off**: this adds a layer of indirection (interface → factory →
+concrete implementation) that a single-schema project wouldn't need.
+That's an explicit cost accepted for reusability — see
+[`docs/extending-the-repository.md`](./extending-the-repository.md) for
+the adoption guide this trade-off is meant to pay for.
 
 ## What's out of scope for this demo (and why)
 

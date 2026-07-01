@@ -10,7 +10,8 @@
 # Does NOT create: a Cognito User Pool, an RDS/database instance, a VPC,
 # or any network resources. Those are expected to already exist in the
 # consuming account -- see variables.tf for exactly what's expected as
-# input, and docs/integration.md (at the repo root) for adoption guidance.
+# input, and docs/extending-the-repository.md plus this module's own
+# README.md (at the repo root) for adoption guidance.
 
 terraform {
   required_providers {
@@ -26,10 +27,13 @@ terraform {
 }
 
 locals {
-  lambda_env = {
-    DB_SECRET_ARN = var.db_secret_arn
-    USER_POOL_ID  = var.cognito_user_pool_id
-  }
+  lambda_env = merge(
+    {
+      DB_SECRET_ARN = var.db_secret_arn
+      USER_POOL_ID  = var.cognito_user_pool_id
+    },
+    var.repository_class != "" ? { REPOSITORY_CLASS = var.repository_class } : {}
+  )
 }
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ import sys
 
 import boto3
 
-from common.db import get_all_app_users, upsert_user, log_sync_event
+from common.service_factory import build_sync_service
 from reconciler.drift import find_drift, summarize, DriftType
 
 logger = logging.getLogger()
@@ -48,10 +48,10 @@ def fetch_all_cognito_users(user_pool_id: str, endpoint_url: str = None) -> list
     return users
 
 
-def apply_fix(record):
+def apply_fix(record, sync_service):
     if record.drift_type == DriftType.MISSING_IN_DB:
         data = record.cognito_data
-        upsert_user(
+        sync_service.sync_user(
             cognito_sub=data["cognito_sub"],
             email=data.get("email"),
             username=data.get("username"),
@@ -62,7 +62,7 @@ def apply_fix(record):
 
     if record.drift_type == DriftType.ATTRIBUTE_MISMATCH:
         data = record.cognito_data
-        upsert_user(
+        sync_service.sync_user(
             cognito_sub=data["cognito_sub"],
             email=data.get("email"),
             username=data.get("username"),
@@ -72,10 +72,9 @@ def apply_fix(record):
         return f"corrected fields: {', '.join(record.mismatched_fields)}"
 
     if record.drift_type == DriftType.ORPHANED_IN_DB:
-        log_sync_event(
+        sync_service.log_failure(
             cognito_sub=record.cognito_sub,
             event_source="reconciler",
-            status="flagged",
             detail="orphaned row -- requires manual review, not auto-deleted",
         )
         return "flagged for manual review (not deleted)"
@@ -92,8 +91,10 @@ def main():
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
     args = parser.parse_args()
 
+    sync_service = build_sync_service()
+
     cognito_users = fetch_all_cognito_users(args.user_pool_id, args.endpoint_url)
-    db_users = get_all_app_users()
+    db_users = sync_service.get_all_users()
 
     drift_records = find_drift(cognito_users, db_users)
     summary = summarize(drift_records)
@@ -106,7 +107,7 @@ def main():
             "mismatched_fields": record.mismatched_fields,
         }
         if args.fix:
-            entry["action_taken"] = apply_fix(record)
+            entry["action_taken"] = apply_fix(record, sync_service)
         results.append(entry)
 
     output = {"summary": summary, "records": results}

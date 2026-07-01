@@ -130,3 +130,29 @@ resource "aws_iam_role_policy" "reconciler_metrics" {
   role   = aws_iam_role.reconciler.id
   policy = data.aws_iam_policy_document.put_metric_data.json
 }
+
+# ---------------------------------------------------------------------------
+# Optional: extra permissions for custom UserRepository implementations
+# (e.g. DynamoDB access) that this module can't predict. Attached to all
+# three roles since any of them may invoke repository methods.
+# ---------------------------------------------------------------------------
+resource "aws_iam_role_policy" "post_confirmation_additional" {
+  count  = var.additional_iam_policy_json != "" ? 1 : 0
+  name   = "${var.project_name}-post-confirmation-additional"
+  role   = aws_iam_role.post_confirmation.id
+  policy = var.additional_iam_policy_json
+}
+
+resource "aws_iam_role_policy" "post_authentication_additional" {
+  count  = var.additional_iam_policy_json != "" ? 1 : 0
+  name   = "${var.project_name}-post-authentication-additional"
+  role   = aws_iam_role.post_authentication.id
+  policy = var.additional_iam_policy_json
+}
+
+resource "aws_iam_role_policy" "reconciler_additional" {
+  count  = var.additional_iam_policy_json != "" ? 1 : 0
+  name   = "${var.project_name}-reconciler-additional"
+  role   = aws_iam_role.reconciler.id
+  policy = var.additional_iam_policy_json
+}

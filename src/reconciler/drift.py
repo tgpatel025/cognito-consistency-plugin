@@ -64,7 +64,9 @@ def _normalize_cognito_user(cognito_user: dict) -> dict:
 def find_drift(cognito_users: list, db_users: list) -> list:
     """
     cognito_users: raw output of cognito-idp list-users (list of dicts)
-    db_users: rows from app_users (list of dicts with cognito_sub, email, username, attributes)
+    db_users: output of UserRepository.get_all_users() -- a list of
+        dicts with cognito_sub, email, username, attributes, regardless
+        of the underlying schema/engine (see common/repositories/base.py)
 
     Returns a list of DriftRecord.
     """

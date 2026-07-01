@@ -10,6 +10,14 @@ Design notes
 - All writes are idempotent (upsert on cognito_sub) so retries from
   Cognito's own Lambda retry behavior, or from the reconciler's replay
   path, never create duplicate or conflicting state.
+- Credentials: if DB_SECRET_ARN is set, connection details are fetched
+  from Secrets Manager (the path used by infra/terraform/module -- see
+  its iam.tf for the exact, minimally-scoped secretsmanager:GetSecretValue
+  permission each function is granted). If DB_SECRET_ARN is not set,
+  falls back to plaintext DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD env
+  vars, which is what the LocalStack/local-demo path uses (see
+  docs/local-demo.md) since it avoids needing a real Secrets Manager
+  round-trip for a quick local run.
 """
 
 import os
@@ -17,6 +25,7 @@ import json
 import logging
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import lru_cache
 
 import psycopg2
 import psycopg2.extras
@@ -25,14 +34,41 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
+@lru_cache(maxsize=1)
+def _fetch_secret(secret_arn: str) -> dict:
+    """Fetch and cache DB credentials from Secrets Manager for the
+    lifetime of this Lambda execution environment. Cached because Lambda
+    execution environments are reused across invocations (warm starts),
+    and re-fetching the same secret on every invocation would add
+    latency and cost for no benefit -- the secret is expected to be
+    stable for the environment's lifetime; a credential rotation is
+    picked up the next time the environment is recycled."""
+    import boto3
+
+    client = boto3.client("secretsmanager")
+    response = client.get_secret_value(SecretId=secret_arn)
+    return json.loads(response["SecretString"])
+
+
 def get_connection():
     """
-    Create a new Postgres connection from environment variables.
-
-    Expected env vars: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD.
-    In production, DB_PASSWORD should come from Secrets Manager, not
-    a plaintext env var. Kept simple here for the demo.
+    Create a new Postgres connection, either from a Secrets Manager
+    secret (DB_SECRET_ARN set) or from plaintext env vars (local/
+    LocalStack fallback -- see module docstring above).
     """
+    secret_arn = os.environ.get("DB_SECRET_ARN")
+
+    if secret_arn:
+        secret = _fetch_secret(secret_arn)
+        return psycopg2.connect(
+            host=secret["host"],
+            port=secret.get("port", 5432),
+            dbname=secret["dbname"],
+            user=secret["username"],
+            password=secret["password"],
+            connect_timeout=5,
+        )
+
     return psycopg2.connect(
         host=os.environ.get("DB_HOST", "localhost"),
         port=os.environ.get("DB_PORT", "5432"),

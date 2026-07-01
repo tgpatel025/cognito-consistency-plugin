@@ -50,19 +50,24 @@ src/
   reconciler/
     drift.py             # pure drift-detection logic (no I/O, fully unit tested)
     run.py                # CLI: report or fix drift
-    replay.py             # replay failed sync events from the dead-letter table
-    scheduled_handler.py  # Lambda entry point for scheduled (EventBridge) runs
+    replay.py             # replay failed sync events, with retry limits (--report shows stuck entries)
+    scheduled_handler.py  # Lambda entry point for scheduled (EventBridge) runs, publishes CloudWatch metrics
   common/
-    db.py                 # Postgres access layer (upsert, audit log, dead letters)
+    db.py                 # Postgres access layer (upsert, audit log, dead letters, Secrets Manager or plaintext env creds)
 infra/
-  terraform/              # real AWS deployment (Cognito, RDS, Lambda, EventBridge)
+  terraform/module/       # reusable Terraform module -- attach to an EXISTING Cognito pool + database (see its README)
   localstack/              # local demo environment (LocalStack + Postgres, no AWS account needed)
 docs/
   architecture.md         # design decisions and trade-offs
   market-context.md       # honest write-up of the commercial validation behind this
   local-demo.md            # step-by-step guide to running the demo locally
 tests/
-  test_drift.py            # unit tests for the reconciliation engine
+  test_drift.py                     # unit tests for the reconciliation engine
+  test_lambda_handlers.py           # Lambda handlers never raise, even under total DB outage
+  test_upsert_failure_isolation.py  # audit-log failures never mask a successful primary write
+  test_replay_retry_logic.py        # dead-letter retry-limit / poison-pill logic
+  test_scheduled_handler.py         # CloudWatch metric publishing
+  test_db_credentials.py            # Secrets Manager vs. plaintext env var credential paths
 ```
 
 ## Quick start (local, no AWS account)
@@ -77,32 +82,42 @@ Then follow [`docs/local-demo.md`](docs/local-demo.md) for the full
 walkthrough (create a Cognito user in LocalStack, run the reconciler,
 watch it detect and fix drift).
 
-## Real AWS deployment
+## Deploying into your own AWS environment
+
+This ships as a Terraform **module**
+([`infra/terraform/module`](infra/terraform/module)), not a
+turnkey "create everything" stack — it's meant to be added to an
+**existing** Cognito User Pool and **existing** database, since that's
+the situation any real adopter is actually in. It does not create a
+User Pool, a database, or a VPC.
 
 ```bash
-cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars   # fill in a real db_password
-../../scripts/build_lambda_deps.sh              # vendor psycopg2/boto3 into src/
-terraform init
-terraform apply
+../../scripts/build_lambda_deps.sh   # vendor psycopg2/boto3 into src/ before packaging
 ```
 
-This provisions a Cognito User Pool, an RDS Postgres instance, the two
-sync Lambdas wired as Cognito triggers, and a reconciler Lambda on a
-15-minute EventBridge schedule. See
-[`infra/terraform/variables.tf`](infra/terraform/variables.tf) for all
-configurable inputs.
+Then call the module from your own Terraform, pointing it at your
+existing pool and a Secrets Manager secret for your existing database.
+See [`infra/terraform/module/README.md`](infra/terraform/module/README.md)
+for the full usage example, least-privilege IAM breakdown (each Lambda
+gets its own role, scoped to exactly what it does), and a note on why
+`lambda_config` is wired in your root module rather than inside this
+one.
 
-Set `alert_email` in your `terraform.tfvars` to receive notifications for
-critical sync failures and accumulating drift (see
-[`infra/terraform/alerting.tf`](infra/terraform/alerting.tf) and the
-"Silent failures are alarmable" section in
-[`docs/architecture.md`](docs/architecture.md)). AWS will send a
-subscription-confirmation email you need to accept before alerts start
-flowing.
+Set `alert_email` when calling the module to receive notifications for
+critical sync failures and accumulating drift — see the "Silent failures
+are alarmable" section in [`docs/architecture.md`](docs/architecture.md)
+for the two-alarm design.
 
-**Cost note**: this uses a `db.t3.micro` RDS instance and Lambda, both
-inexpensive but not free. Run `terraform destroy` when done experimenting.
+**Why there's no standalone "create everything from scratch" example**:
+an earlier version of this repo included one, but provisioning a brand
+new Cognito pool and this module's Lambdas in the same Terraform run
+creates a genuine circular dependency (the reconciler's IAM policy needs
+the pool's ARN; the pool's `lambda_config` needs the module's Lambda
+ARNs) that doesn't exist in the real integration case, since an existing
+pool's ARN is already a known value. Rather than paper over that with a
+weaker IAM scope just to make a demo path work, the demo path is
+[`infra/localstack`](infra/localstack) instead, which exercises the same
+sync/reconciliation code without needing any real AWS resources at all.
 
 ## Testing
 

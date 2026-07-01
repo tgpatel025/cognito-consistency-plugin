@@ -148,6 +148,8 @@ into LocalStack and wiring them as real Cognito triggers is possible but
 adds meaningful setup complexity (packaging, LocalStack's Lambda executor
 config, IAM emulation quirks). This demo intentionally skips that and
 instead demonstrates the reconciler against manually-created drift, since
-the reconciler is the core "consistency platform" contribution. For a
-full real-AWS deployment including the live triggers, see
-[`infra/terraform`](../infra/terraform).
+the reconciler is the core "consistency platform" contribution. To
+attach the real Lambdas to a real Cognito pool, see the Terraform module
+at [`infra/terraform/module`](../infra/terraform/module) and its
+[README](../infra/terraform/module/README.md) for how to integrate it
+against an existing pool and database.

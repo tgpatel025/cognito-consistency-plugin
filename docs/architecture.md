@@ -163,7 +163,7 @@ line alone is not a safe place to leave that: nobody reads logs
 proactively, and log retention eventually expires it entirely.
 
 Two independent alarm paths cover this, defined in
-[`infra/terraform/alerting.tf`](../infra/terraform/alerting.tf):
+[`infra/terraform/module/alerting.tf`](../infra/terraform/module/alerting.tf):
 
 - **Critical log alarm**: a CloudWatch Logs metric filter scans each
   sync Lambda's log group for `CRITICAL` and fires an alarm on ≥1
@@ -219,12 +219,41 @@ application code against a Postgres column. That's simpler to build for
 a demo, but means the retry-count logic lives in `replay.py` rather than
 being a property of the underlying queue mechanism.
 
+### 8. The Terraform module owns only what this project invented
+
+The first version of the Terraform config provisioned everything from
+scratch: a Cognito User Pool, an RDS instance, and the sync/reconciler
+Lambdas, all in one flat root module. That's the wrong shape for
+something meant to be *adopted*: a real developer already has a Cognito
+pool (with real users in it — it can't be recreated), an existing
+database with their own schema, and their own VPC/security posture. A
+module that tries to own those forces a migration, not an integration.
+
+[`infra/terraform/module`](../infra/terraform/module) now takes the
+User Pool ARN, a Secrets Manager ARN for the database, and optional VPC
+config as **inputs**, and creates only the Lambdas, their per-function
+IAM roles, and the alerting that watches them — the actual reusable
+unit. `lambda_config` (wiring the Lambdas as the pool's triggers) is set
+by the *consumer's* root module against their own pool resource, not
+inside this module, since Terraform's `aws_cognito_user_pool` resource
+requires the whole pool to be declared in one block and this module
+doesn't own that block.
+
+**Why there's no "create everything from scratch" example**: an earlier
+version had one, calling the module while also creating a brand-new
+pool in the same root. That produces a genuine circular dependency —
+the reconciler's IAM policy needs the pool's ARN (exact-resource
+scoping, not a wildcard), while the pool's `lambda_config` needs the
+module's Lambda ARNs. This cycle doesn't exist in the real integration
+case (an existing pool's ARN is already a known value, not something
+being created in the same apply), so rather than loosen IAM scoping
+just to make a from-scratch demo path work, that path was removed.
+[`infra/localstack`](../infra/localstack) is the demo path instead —
+it exercises the same sync/reconciliation code without needing any real
+AWS resources, let alone ones this module would have to help create.
+
 ## What's out of scope for this demo (and why)
 
-- **VPC networking for RDS** — the Terraform config uses a publicly
-  accessible RDS instance for simplicity. Production would put Postgres
-  in a private subnet and give Lambda VPC access, at the cost of cold
-  start latency and NAT Gateway cost.
 - **Multi-tenancy** — a real product would need per-tenant isolation,
   which changes the schema and the `--fix` blast radius significantly.
 - **Field-level conflict resolution** — the mismatch-repair logic treats

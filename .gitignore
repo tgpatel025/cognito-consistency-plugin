@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Vendored Lambda deps (installed by scripts/build_lambda_deps.sh before deploy)
+src/boto3*/
+src/psycopg2*/
+src/botocore*/
+src/*.dist-info/
+src/*.libs/
+src/bin/
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/build/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+infra/terraform/*.tfvars
+!infra/terraform/*.tfvars.example
+
+# LocalStack
+infra/localstack/localstack-data/
+.demo-user-pool-id
+
+.DS_Store

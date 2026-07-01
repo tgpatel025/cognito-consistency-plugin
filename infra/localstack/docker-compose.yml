@@ -1,0 +1,33 @@
+version: "3.8"
+
+# Local demo environment: LocalStack simulates Cognito + Lambda, a real
+# Postgres container plays the app database. This lets anyone clone the
+# repo and run the whole system with no AWS account and no cost.
+#
+# Usage: see docs/local-demo.md
+
+services:
+  localstack:
+    image: localstack/localstack:3
+    container_name: ccp-localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - SERVICES=cognito-idp,lambda,events,iam,sts
+      - DEBUG=0
+      - LAMBDA_EXECUTOR=local
+    volumes:
+      - "./localstack-data:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+  postgres:
+    image: postgres:16
+    container_name: ccp-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=identity_platform
+    volumes:
+      - "./schema.sql:/docker-entrypoint-initdb.d/schema.sql"

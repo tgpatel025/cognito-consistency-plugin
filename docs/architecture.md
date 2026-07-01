@@ -121,19 +121,38 @@ same event can be processed more than once. All writes key on the
 immutable `cognito_sub`, so re-processing an event is a no-op change, not
 a duplicate row.
 
-**Known gap**: `upsert_user()` writes to `app_users` and then calls
-`log_sync_event()` as a *separate* database transaction (see
-`common/db.py` — each goes through its own `with db_cursor()` block, its
-own connection, its own commit). They are not atomic together. If the
-Lambda is frozen or killed in the narrow window between the two calls,
-`app_users` will have been updated but `sync_audit_log` will be missing
-that entry — the audit trail can under-report relative to actual state.
-This is judged an acceptable risk for a demo (the window is a single
-function call, and Lambda freezing mid-execution between two sequential
-statements is rare), but a stricter audit guarantee would need either a
-single transaction spanning both writes, or a transactional outbox
-pattern where the audit event is derived from a WAL/CDC stream on
-`app_users` rather than written by the application code path itself.
+**Why the audit write is separate from, and cannot affect, the primary
+write**: `upsert_user()` writes to `app_users` and then calls
+`log_sync_event()` as a *second*, independent transaction (see
+`common/db.py`). This is intentional, not an oversight: `sync_audit_log`
+is a record *about* `app_users`, and a less-critical record should never
+be able to veto a more-critical write. Wrapping both in one shared
+transaction would mean a full audit-table disk, a misbehaving trigger,
+or any other audit-side problem could roll back a successful user sync
+— exactly backwards from what you want.
+
+The corollary, which the code enforces explicitly: if the audit write
+fails after the `app_users` write has already committed, `upsert_user()`
+still returns success and does not raise. The failure is logged loudly
+(so the compliance gap is visible in CloudWatch), but it's not allowed to
+propagate back to the caller and be mistaken for a sync failure — that
+would risk a Lambda handler enqueueing an unnecessary dead letter for a
+write that actually succeeded. See `tests/test_upsert_failure_isolation.py`
+for the explicit case (audit write fails, primary write is still
+reported as successful) and its counterpart (primary write fails, audit
+log is never even attempted for a nonexistent row).
+
+**Remaining gap**: because the two writes aren't atomic, there's a
+narrow window — the Lambda being frozen or killed between the `app_users`
+commit and the `log_sync_event` call — where the audit trail permanently
+under-reports relative to `app_users`, with no automatic way to detect or
+backfill it. This is judged an acceptable residual risk for a demo (a
+single function call is a small window), but a stricter guarantee would
+need either a transactional outbox (write the intended audit event in
+the *same* transaction as `app_users`, as a row in an outbox table, then
+have a separate process publish it to `sync_audit_log`) or deriving audit
+events from a CDC/WAL stream on `app_users` instead of writing them from
+application code at all.
 
 ### 6. Silent failures are alarmable, not just logged
 

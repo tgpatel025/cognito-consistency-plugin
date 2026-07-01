@@ -64,6 +64,16 @@ def upsert_user(cognito_sub, email, username, attributes, event_source):
 
     Returns the row id and whether this was an insert or update, which the
     caller uses for audit logging.
+
+    Design note: the app_users write and the audit-log write are
+    deliberately two separate transactions (see log_sync_event), and the
+    audit write is deliberately allowed to fail without affecting this
+    function's return value or raising to the caller. The audit log
+    exists to record what happened to app_users -- it should never be
+    able to veto or mask the outcome of the write it's describing. If the
+    audit write fails, we log loudly (it means the compliance trail has
+    a gap) but the caller still sees upsert_user as successful, because
+    it was: the user's data landed correctly.
     """
     now = datetime.now(timezone.utc)
     with db_cursor() as cur:
@@ -83,12 +93,26 @@ def upsert_user(cognito_sub, email, username, attributes, event_source):
         )
         row = cur.fetchone()
 
-    log_sync_event(
-        cognito_sub=cognito_sub,
-        event_source=event_source,
-        status="success",
-        detail="insert" if row["inserted"] else "update",
-    )
+    try:
+        log_sync_event(
+            cognito_sub=cognito_sub,
+            event_source=event_source,
+            status="success",
+            detail="insert" if row["inserted"] else "update",
+        )
+    except Exception as exc:
+        # The app_users write above already committed successfully. This
+        # failure means only the audit trail has a gap for this event --
+        # it must not be reported back as a sync failure, and must not
+        # raise, or a caller might mistakenly enqueue a dead letter /
+        # retry for a write that already succeeded.
+        logger.error(
+            "app_users upsert for %s succeeded, but audit log write failed: %s. "
+            "This event will not appear in sync_audit_log.",
+            cognito_sub,
+            exc,
+        )
+
     return row
 
 

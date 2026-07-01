@@ -19,7 +19,7 @@ drift -- which is exactly what the reconciliation job is for.
 
 import logging
 
-from common.db import upsert_user, enqueue_dead_letter
+from common.db import upsert_user, enqueue_dead_letter, log_sync_event
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -48,7 +48,28 @@ def handler(event, context):
         logger.info("Synced user %s to app database", cognito_sub)
     except Exception as exc:
         logger.error("Failed to sync user %s: %s", cognito_sub, exc)
-        enqueue_dead_letter(cognito_sub=cognito_sub, payload=attributes, error=exc)
+        # The dead-letter/audit writes below are themselves DB calls, so if
+        # upsert_user failed because Postgres is unreachable, these will
+        # likely fail too. They're wrapped separately so that failure can
+        # never propagate out of the handler -- the one invariant that must
+        # hold no matter what is "this function never raises." Worst case
+        # here is a sync failure we can't even record; that's an acceptable
+        # degradation compared to blocking the user's sign-up.
+        try:
+            enqueue_dead_letter(cognito_sub=cognito_sub, payload=attributes, error=exc)
+            log_sync_event(
+                cognito_sub=cognito_sub,
+                event_source="post_confirmation",
+                status="failure",
+                detail=str(exc),
+            )
+        except Exception as inner_exc:
+            logger.critical(
+                "Failed to record dead-letter/audit for user %s after sync failure: %s. "
+                "This event is now unrecoverable except via Cognito's own user record.",
+                cognito_sub,
+                inner_exc,
+            )
 
     # Always return the event unmodified -- never block Cognito's own flow.
     return event

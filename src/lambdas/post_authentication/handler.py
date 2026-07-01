@@ -12,7 +12,7 @@ auth flow, always leave a trail if the sync fails.
 
 import logging
 
-from common.db import upsert_user, enqueue_dead_letter
+from common.db import upsert_user, enqueue_dead_letter, log_sync_event
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -37,6 +37,24 @@ def handler(event, context):
         )
     except Exception as exc:
         logger.error("Failed to sync user %s on sign-in: %s", cognito_sub, exc)
-        enqueue_dead_letter(cognito_sub=cognito_sub, payload=attributes, error=exc)
+        # See post_confirmation/handler.py for why this inner try/except
+        # exists: these are DB calls too, so they can fail for the same
+        # reason upsert_user just did. They must never be allowed to
+        # propagate and block the user's sign-in.
+        try:
+            enqueue_dead_letter(cognito_sub=cognito_sub, payload=attributes, error=exc)
+            log_sync_event(
+                cognito_sub=cognito_sub,
+                event_source="post_authentication",
+                status="failure",
+                detail=str(exc),
+            )
+        except Exception as inner_exc:
+            logger.critical(
+                "Failed to record dead-letter/audit for user %s after sync failure: %s. "
+                "This event is now unrecoverable except via Cognito's own user record.",
+                cognito_sub,
+                inner_exc,
+            )
 
     return event

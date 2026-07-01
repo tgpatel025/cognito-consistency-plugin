@@ -121,6 +121,44 @@ same event can be processed more than once. All writes key on the
 immutable `cognito_sub`, so re-processing an event is a no-op change, not
 a duplicate row.
 
+### 6. Silent failures are alarmable, not just logged
+
+`logger.critical(...)` in the Lambda handlers only fires when *both* the
+primary sync and the dead-letter/audit fallback fail (see decision #1
+above) — meaning an event is lost with zero database record of it. A log
+line alone is not a safe place to leave that: nobody reads logs
+proactively, and log retention eventually expires it entirely.
+
+Two independent alarm paths cover this, defined in
+[`infra/terraform/alerting.tf`](../infra/terraform/alerting.tf):
+
+- **Critical log alarm**: a CloudWatch Logs metric filter scans each
+  sync Lambda's log group for `CRITICAL` and fires an alarm on ≥1
+  occurrence. This is the "an event was lost entirely" case — fast,
+  rare, and severe enough to notify on immediately.
+- **Drift accumulation alarm**: the scheduled reconciler
+  (`scheduled_handler.py`) publishes a `DriftCount` CloudWatch metric on
+  every run, broken down by drift type plus a total. An alarm fires if
+  total drift stays at or above a threshold across N consecutive runs
+  (both configurable via `drift_alarm_threshold` /
+  `drift_alarm_evaluation_periods`). This catches the more common case:
+  individual sync failures that *were* recorded but are accumulating
+  faster than they're replayed, or drift from causes other than sync
+  failures (e.g. a direct Cognito admin edit).
+
+Both alarms publish to a shared SNS topic (`aws_sns_topic.alerts`), which
+supports an email subscription out of the box and can be extended with
+additional subscribers (Slack via AWS Chatbot, PagerDuty, etc.) without
+code changes.
+
+**Why two separate alarms instead of one**: they represent different
+severities and different response actions. A critical-log alert means
+"go check why Postgres is unreachable, right now." A drift-accumulation
+alert means "review the diff and decide whether to run `--fix`" — a much
+less urgent, more deliberate action. Collapsing them into one alarm would
+either make the urgent case too noisy to page on, or the routine case too
+alarming to ignore fatigue.
+
 ## What's out of scope for this demo (and why)
 
 - **VPC networking for RDS** — the Terraform config uses a publicly

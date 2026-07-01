@@ -21,3 +21,21 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
+
+variable "alert_email" {
+  description = "Email address to receive SNS alerts for critical sync failures and drift accumulation. Leave empty to skip the email subscription (you can still subscribe other protocols, e.g. Slack via a Chatbot/Lambda subscriber, to the SNS topic manually)."
+  type        = string
+  default     = ""
+}
+
+variable "drift_alarm_threshold" {
+  description = "Total drift count that triggers the drift-accumulation alarm."
+  type        = number
+  default     = 5
+}
+
+variable "drift_alarm_evaluation_periods" {
+  description = "Number of consecutive 15-minute reconciler runs the drift count must stay at or above the threshold before alarming. Higher values reduce noise from transient blips at the cost of slower detection."
+  type        = number
+  default     = 2
+}

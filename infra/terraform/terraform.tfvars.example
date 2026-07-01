@@ -2,3 +2,8 @@ aws_region   = "us-east-1"
 project_name = "cognito-consistency"
 db_username  = "ccp_admin"
 db_password  = "changeme-use-a-real-secret-or-TF_VAR_db_password"
+
+# Alerting (optional -- leave alert_email empty to skip email notifications)
+alert_email                    = "you@example.com"
+drift_alarm_threshold          = 5
+drift_alarm_evaluation_periods = 2

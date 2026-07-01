@@ -93,6 +93,14 @@ sync Lambdas wired as Cognito triggers, and a reconciler Lambda on a
 [`infra/terraform/variables.tf`](infra/terraform/variables.tf) for all
 configurable inputs.
 
+Set `alert_email` in your `terraform.tfvars` to receive notifications for
+critical sync failures and accumulating drift (see
+[`infra/terraform/alerting.tf`](infra/terraform/alerting.tf) and the
+"Silent failures are alarmable" section in
+[`docs/architecture.md`](docs/architecture.md)). AWS will send a
+subscription-confirmation email you need to accept before alerts start
+flowing.
+
 **Cost note**: this uses a `db.t3.micro` RDS instance and Lambda, both
 inexpensive but not free. Run `terraform destroy` when done experimenting.
 

@@ -99,7 +99,7 @@ sync.
 ## 9. Try the dead-letter replay path
 
 The dead-letter path is exercised more directly by the unit tests
-(`tests/test_drift.py`) and by manually inserting a row into
+(`tests/test_replay_retry_logic.py`) and by manually inserting a row into
 `sync_dead_letters`, since triggering an actual Lambda failure requires
 deploying the Lambda into LocalStack:
 
@@ -112,6 +112,27 @@ VALUES ('demo-sub-123', '{\"email\": \"bob@example.com\", \"username\": \"bob\"}
 python -m reconciler.replay --dry-run   # preview
 python -m reconciler.replay              # actually replay
 ```
+
+### Simulating a poison-pill (permanently failing) dead letter
+
+Replay retries are capped at `MAX_RETRY_ATTEMPTS` (5, in
+`reconciler/replay.py`) — a dead letter caused by bad data rather than
+a transient outage would otherwise fail identically forever. To see this:
+
+```bash
+# Insert a dead letter with a NULL cognito_sub payload that will always
+# fail the upsert (app_users.cognito_sub is NOT NULL)
+docker exec -it ccp-postgres psql -U postgres -d identity_platform -c "
+INSERT INTO sync_dead_letters (cognito_sub, payload, error, occurred_at, replayed, retry_count)
+VALUES ('bad-sub', '{\"email\": null, \"username\": null}', 'simulated permanent failure', now(), false, 5);
+"
+
+python -m reconciler.replay --report
+```
+
+Expected output: this entry shows up under "stuck" rather than being
+silently retried again. After fixing the underlying data, reset
+`retry_count` to `0` for that row to make it eligible for replay again.
 
 ## Tear down
 

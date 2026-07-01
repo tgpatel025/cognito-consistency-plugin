@@ -121,6 +121,20 @@ same event can be processed more than once. All writes key on the
 immutable `cognito_sub`, so re-processing an event is a no-op change, not
 a duplicate row.
 
+**Known gap**: `upsert_user()` writes to `app_users` and then calls
+`log_sync_event()` as a *separate* database transaction (see
+`common/db.py` — each goes through its own `with db_cursor()` block, its
+own connection, its own commit). They are not atomic together. If the
+Lambda is frozen or killed in the narrow window between the two calls,
+`app_users` will have been updated but `sync_audit_log` will be missing
+that entry — the audit trail can under-report relative to actual state.
+This is judged an acceptable risk for a demo (the window is a single
+function call, and Lambda freezing mid-execution between two sequential
+statements is rare), but a stricter audit guarantee would need either a
+single transaction spanning both writes, or a transactional outbox
+pattern where the audit event is derived from a WAL/CDC stream on
+`app_users` rather than written by the application code path itself.
+
 ### 6. Silent failures are alarmable, not just logged
 
 `logger.critical(...)` in the Lambda handlers only fires when *both* the
@@ -159,6 +173,33 @@ less urgent, more deliberate action. Collapsing them into one alarm would
 either make the urgent case too noisy to page on, or the routine case too
 alarming to ignore fatigue.
 
+### 7. Dead-letter replay has a retry limit, so bad data can't retry forever
+
+The first version of `replay.py` retried every unreplayed dead letter
+unconditionally, with no way to tell a *transient* failure (DB was
+briefly down, replaying now succeeds) from a *permanent* one (the
+payload itself is invalid — e.g. a null email hitting a `NOT NULL`
+constraint). A permanent failure would fail identically on every replay
+run, forever, and the summary output (`N succeeded, M failed`) gave no
+way to see whether `M` was the same stuck entry every time or a new
+failure each time.
+
+Each dead-letter row now tracks `retry_count` and `last_error`. Entries
+at or past `MAX_RETRY_ATTEMPTS` (5) are excluded from normal replay and
+surfaced separately via `python -m reconciler.replay --report`, which
+prints the specific `cognito_sub`, retry count, and last error for each
+stuck entry. This turns an invisible, infinitely-retried failure into a
+visible, bounded one that a human can act on — similar to how you'd
+triage a dead-letter queue in SQS rather than assuming "retry" is always
+the right default action.
+
+**Trade-off**: this pattern-matches SQS DLQ semantics (which also have a
+max-receive-count before an event is considered undeliverable), but SQS
+enforces it at the infrastructure level; here it's enforced in
+application code against a Postgres column. That's simpler to build for
+a demo, but means the retry-count logic lives in `replay.py` rather than
+being a property of the underlying queue mechanism.
+
 ## What's out of scope for this demo (and why)
 
 - **VPC networking for RDS** — the Terraform config uses a publicly
@@ -167,9 +208,6 @@ alarming to ignore fatigue.
   start latency and NAT Gateway cost.
 - **Multi-tenancy** — a real product would need per-tenant isolation,
   which changes the schema and the `--fix` blast radius significantly.
-- **Metrics/alerting on drift** — the scheduled reconciler currently logs
-  to CloudWatch Logs only. A production version would emit CloudWatch
-  metrics and alert past a drift-count threshold.
 - **Field-level conflict resolution** — the mismatch-repair logic treats
   Cognito as authoritative for *all* compared fields. A more mature
   version might need per-field ownership rules (e.g. app DB owns a

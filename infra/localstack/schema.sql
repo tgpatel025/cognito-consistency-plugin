@@ -33,10 +33,14 @@ CREATE TABLE IF NOT EXISTS sync_dead_letters (
     id            SERIAL PRIMARY KEY,
     cognito_sub   TEXT NOT NULL,
     payload       JSONB NOT NULL,
-    error         TEXT NOT NULL,
+    error         TEXT NOT NULL,          -- original error from the Lambda handler
     occurred_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     replayed      BOOLEAN NOT NULL DEFAULT false,
-    replayed_at   TIMESTAMPTZ
+    replayed_at   TIMESTAMPTZ,
+    retry_count   INT NOT NULL DEFAULT 0, -- incremented on every failed replay attempt
+    last_error    TEXT,                    -- most recent replay failure, if retry_count > 0
+    last_attempted_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_dead_letters_unreplayed ON sync_dead_letters (replayed) WHERE replayed = false;
+CREATE INDEX IF NOT EXISTS idx_dead_letters_stuck ON sync_dead_letters (retry_count) WHERE replayed = false AND retry_count > 0;

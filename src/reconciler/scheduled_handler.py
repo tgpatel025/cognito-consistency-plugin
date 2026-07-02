@@ -79,7 +79,7 @@ def handler(event, context):
 
     sync_service = build_sync_service()
 
-    cognito_users = fetch_all_cognito_users(user_pool_id)
+    cognito_users = fetch_all_cognito_users(user_pool_id, os.environ.get("AWS_ENDPOINT_URL"))
     db_users = sync_service.get_all_users()
 
     drift_records = find_drift(cognito_users, db_users)

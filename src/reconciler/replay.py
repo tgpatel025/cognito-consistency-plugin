@@ -49,6 +49,7 @@ def replay_all(sync_service, dry_run=False):
     replayed, failed = 0, 0
     for entry in entries:
         payload = entry["payload"]
+        attributes = payload.get("attributes", {})
         if dry_run:
             logger.info("[dry-run] would replay cognito_sub=%s (attempt %d)",
                         entry["cognito_sub"], entry["retry_count"] + 1)
@@ -56,9 +57,9 @@ def replay_all(sync_service, dry_run=False):
         try:
             sync_service.sync_user(
                 cognito_sub=entry["cognito_sub"],
-                email=payload.get("email"),
-                username=payload.get("username") or payload.get("cognito:username"),
-                attributes=payload,
+                email=attributes.get("email"),
+                username=payload.get("username"),
+                attributes=attributes,
                 event_source="replay",
             )
             sync_service.mark_dead_letter_replayed(entry["id"])

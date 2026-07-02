@@ -40,13 +40,14 @@ class SyncService:
         result = self.repository.upsert_user(
             cognito_sub=cognito_sub, email=email, username=username, attributes=attributes,
         )
+        detail = "insert" if result.get("inserted") else "update"
 
         try:
             self.repository.log_sync_event(
                 cognito_sub=cognito_sub,
                 event_source=event_source,
                 status="success",
-                detail="insert" if result.get("inserted") else "update",
+                detail=detail,
             )
         except Exception as exc:
             logger.error(
@@ -57,6 +58,43 @@ class SyncService:
             )
 
         return result
+
+    def sync_or_dead_letter(self, cognito_sub, email, username, attributes, event_source) -> bool:
+        """Sync a user; on failure, dead-letter it and record a failure
+        audit event instead of raising. Callers that must never propagate
+        a sync failure (the Lambda triggers) should call this instead of
+        sync_user directly. Returns True on success, False on failure.
+
+        The dead-letter payload keeps username alongside attributes
+        (rather than just attributes) since username is not itself a
+        Cognito attribute -- replay needs it back to call sync_user
+        with the same arguments used here."""
+        try:
+            self.sync_user(
+                cognito_sub=cognito_sub,
+                email=email,
+                username=username,
+                attributes=attributes,
+                event_source=event_source,
+            )
+            return True
+        except Exception as exc:
+            logger.error("Failed to sync user %s via %s: %s", cognito_sub, event_source, exc)
+            try:
+                self.enqueue_dead_letter(
+                    cognito_sub=cognito_sub,
+                    payload={"username": username, "attributes": attributes},
+                    error=exc,
+                )
+                self.log_failure(cognito_sub=cognito_sub, event_source=event_source, detail=str(exc))
+            except Exception as inner_exc:
+                logger.critical(
+                    "Failed to record dead-letter/audit for user %s after sync failure: %s. "
+                    "This event is now unrecoverable except via Cognito's own user record.",
+                    cognito_sub,
+                    inner_exc,
+                )
+            return False
 
     def get_all_users(self) -> list[dict]:
         return self.repository.get_all_users()

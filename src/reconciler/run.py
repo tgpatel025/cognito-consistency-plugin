@@ -107,7 +107,11 @@ def main():
             "mismatched_fields": record.mismatched_fields,
         }
         if args.fix:
-            entry["action_taken"] = apply_fix(record, sync_service)
+            try:
+                entry["action_taken"] = apply_fix(record, sync_service)
+            except Exception as exc:
+                logger.error("Failed to apply fix for %s: %s", record.cognito_sub, exc)
+                entry["action_taken"] = f"fix failed: {exc}"
         results.append(entry)
 
     output = {"summary": summary, "records": results}

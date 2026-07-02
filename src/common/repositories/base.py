@@ -112,7 +112,11 @@ class UserRepository(ABC):
 
     @abstractmethod
     def enqueue_dead_letter(self, cognito_sub: str, payload: dict, error: str) -> None:
-        """Record a failed sync attempt for later replay."""
+        """Record a failed sync attempt for later replay. `payload` is
+        opaque to the repository -- store and return it unchanged.
+        Callers (SyncService.sync_or_dead_letter) write it as
+        {"username": str | None, "attributes": dict}, and replay.py reads
+        it back in that same shape to reconstruct the sync_user() call."""
         raise NotImplementedError
 
     @abstractmethod

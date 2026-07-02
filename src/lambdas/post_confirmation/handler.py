@@ -19,8 +19,9 @@ drift -- which is exactly what the reconciliation job is for.
 Storage: this handler depends on SyncService (common/sync_service.py),
 never on any specific database or schema directly. Which storage
 backend SyncService uses is decided by common/service_factory.py --
-defaults to the Postgres reference schema, or your own implementation
-of UserRepository via the REPOSITORY_CLASS env var. See
+there is no default; you must implement UserRepository and point the
+REPOSITORY_CLASS env var at it (examples/postgres/repository.py is a
+ready-to-use reference implementation, not a default). See
 docs/extending-the-repository.md.
 """
 
@@ -46,37 +47,13 @@ def handler(event, context):
     email = attributes.get("email")
     username = event.get("userName")
 
-    try:
-        _sync_service.sync_user(
-            cognito_sub=cognito_sub,
-            email=email,
-            username=username,
-            attributes=attributes,
-            event_source="post_confirmation",
-        )
-        logger.info("Synced user %s to app database", cognito_sub)
-    except Exception as exc:
-        logger.error("Failed to sync user %s: %s", cognito_sub, exc)
-        # The dead-letter/audit writes below go through the same
-        # repository, so if sync_user failed because the database is
-        # unreachable, these will likely fail too. They're wrapped
-        # separately so that failure can never propagate out of the
-        # handler -- the one invariant that must hold no matter what is
-        # "this function never raises." Worst case here is a sync
-        # failure we can't even record; that's an acceptable degradation
-        # compared to blocking the user's sign-up.
-        try:
-            _sync_service.enqueue_dead_letter(cognito_sub=cognito_sub, payload=attributes, error=exc)
-            _sync_service.log_failure(
-                cognito_sub=cognito_sub, event_source="post_confirmation", detail=str(exc),
-            )
-        except Exception as inner_exc:
-            logger.critical(
-                "Failed to record dead-letter/audit for user %s after sync failure: %s. "
-                "This event is now unrecoverable except via Cognito's own user record.",
-                cognito_sub,
-                inner_exc,
-            )
+    _sync_service.sync_or_dead_letter(
+        cognito_sub=cognito_sub,
+        email=email,
+        username=username,
+        attributes=attributes,
+        event_source="post_confirmation",
+    )
 
     # Always return the event unmodified -- never block Cognito's own flow.
     return event

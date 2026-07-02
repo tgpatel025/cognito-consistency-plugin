@@ -57,6 +57,24 @@ def test_publish_drift_metrics_sends_one_datapoint_per_drift_type_plus_total():
     assert values_by_dimension["TOTAL"] == 6
 
 
+def test_handler_passes_endpoint_url_through_to_fetch_all_cognito_users():
+    """Regression: scheduled_handler used to call fetch_all_cognito_users
+    with no endpoint_url at all, so it could never be pointed at
+    LocalStack the way reconciler.run's CLI can via --endpoint-url."""
+    import reconciler.scheduled_handler as sched
+
+    fake_sync_service = MagicMock()
+    fake_sync_service.get_all_users.return_value = []
+
+    with patch.dict(os.environ, {"USER_POOL_ID": "pool-1", "AWS_ENDPOINT_URL": "http://localhost:4566"}), \
+         patch("reconciler.scheduled_handler.build_sync_service", return_value=fake_sync_service), \
+         patch("reconciler.scheduled_handler.fetch_all_cognito_users", return_value=[]) as mock_fetch, \
+         patch("reconciler.scheduled_handler.publish_drift_metrics"):
+        sched.handler({}, None)
+
+    mock_fetch.assert_called_once_with("pool-1", "http://localhost:4566")
+
+
 def test_publish_drift_metrics_never_raises_if_cloudwatch_call_fails():
     """Publishing metrics is best-effort -- a CloudWatch outage must not
     break the reconciliation run itself."""

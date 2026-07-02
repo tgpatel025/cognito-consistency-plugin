@@ -76,9 +76,12 @@ portfolio piece: it's a well-scoped systems problem, not a padded pitch.
 Cognito's Lambda triggers are synchronous with a 5-second timeout. If a
 trigger throws, the user's sign-up or sign-in fails — a UX and
 availability regression far worse than the sync problem itself. Both
-Lambda handlers deliberately catch all exceptions, write a
-`sync_dead_letters` row, and return the event unmodified so Cognito's own
-flow always succeeds. See `src/lambdas/*/handler.py`.
+Lambda handlers call `SyncService.sync_or_dead_letter()`, which
+catches all exceptions, writes a `sync_dead_letters` row, and never
+propagates the failure -- the handlers themselves return the event
+unmodified so Cognito's own flow always succeeds. See
+`src/common/sync_service.py` for the catch/dead-letter logic and
+`src/lambdas/*/handler.py` for the call site.
 
 **Trade-off**: this means a DB outage produces *drift*, not a stuck
 sign-up. That's the correct trade-off for identity, but it does mean the

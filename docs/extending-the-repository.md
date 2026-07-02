@@ -45,7 +45,7 @@ for the full, documented contract. In short, you implement:
 | `upsert_user(cognito_sub, email, username, attributes)` | Create or update a user record. Must be idempotent. |
 | `get_all_users()` | Return every synced user, for the reconciler to diff against Cognito. |
 | `log_sync_event(cognito_sub, event_source, status, detail)` | Append an audit record. |
-| `enqueue_dead_letter(cognito_sub, payload, error)` | Record a failed sync for later replay. |
+| `enqueue_dead_letter(cognito_sub, payload, error)` | Record a failed sync for later replay. `payload` is opaque to you -- store and return it unchanged; it's written/read as `{"username": str \| None, "attributes": dict}`. |
 | `fetch_unreplayed_dead_letters(max_retry)` | Dead letters eligible for retry. |
 | `fetch_stuck_dead_letters(max_retry)` | Dead letters that exceeded the retry limit. |
 | `mark_dead_letter_replayed(id)` | Mark a dead letter successfully replayed. |

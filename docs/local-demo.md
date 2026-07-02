@@ -119,7 +119,7 @@ deploying the Lambda into LocalStack:
 ```bash
 docker exec -it ccp-postgres psql -U postgres -d identity_platform -c "
 INSERT INTO sync_dead_letters (cognito_sub, payload, error, occurred_at, replayed)
-VALUES ('demo-sub-123', '{\"email\": \"bob@example.com\", \"username\": \"bob\"}', 'simulated DB timeout', now(), false);
+VALUES ('demo-sub-123', '{\"username\": \"bob\", \"attributes\": {\"email\": \"bob@example.com\"}}', 'simulated DB timeout', now(), false);
 "
 
 PYTHONPATH=src python -m reconciler.replay --dry-run   # preview
@@ -137,7 +137,7 @@ a transient outage would otherwise fail identically forever. To see this:
 # fail the upsert (app_users.cognito_sub is NOT NULL)
 docker exec -it ccp-postgres psql -U postgres -d identity_platform -c "
 INSERT INTO sync_dead_letters (cognito_sub, payload, error, occurred_at, replayed, retry_count)
-VALUES ('bad-sub', '{\"email\": null, \"username\": null}', 'simulated permanent failure', now(), false, 5);
+VALUES ('bad-sub', '{\"username\": null, \"attributes\": {\"email\": null}}', 'simulated permanent failure', now(), false, 5);
 "
 
 PYTHONPATH=src python -m reconciler.replay --report

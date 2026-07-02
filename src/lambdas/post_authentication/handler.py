@@ -34,31 +34,12 @@ def handler(event, context):
     email = attributes.get("email")
     username = event.get("userName")
 
-    try:
-        _sync_service.sync_user(
-            cognito_sub=cognito_sub,
-            email=email,
-            username=username,
-            attributes=attributes,
-            event_source="post_authentication",
-        )
-    except Exception as exc:
-        logger.error("Failed to sync user %s on sign-in: %s", cognito_sub, exc)
-        # See post_confirmation/handler.py for why this inner try/except
-        # exists: these go through the same repository, so they can fail
-        # for the same reason sync_user just did. They must never be
-        # allowed to propagate and block the user's sign-in.
-        try:
-            _sync_service.enqueue_dead_letter(cognito_sub=cognito_sub, payload=attributes, error=exc)
-            _sync_service.log_failure(
-                cognito_sub=cognito_sub, event_source="post_authentication", detail=str(exc),
-            )
-        except Exception as inner_exc:
-            logger.critical(
-                "Failed to record dead-letter/audit for user %s after sync failure: %s. "
-                "This event is now unrecoverable except via Cognito's own user record.",
-                cognito_sub,
-                inner_exc,
-            )
+    _sync_service.sync_or_dead_letter(
+        cognito_sub=cognito_sub,
+        email=email,
+        username=username,
+        attributes=attributes,
+        event_source="post_authentication",
+    )
 
     return event

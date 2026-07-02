@@ -27,6 +27,24 @@ def test_postgres_repository_implements_full_interface():
     assert isinstance(repo, UserRepository)
 
 
+def test_upsert_user_rejects_empty_cognito_sub():
+    """Regression: Postgres's ON CONFLICT (cognito_sub) DO UPDATE does not
+    dedupe rows when cognito_sub is NULL -- Postgres treats every NULL as
+    distinct for unique constraints. Without this guard, a malformed
+    dead-letter payload with a missing cognito_sub would insert a new
+    duplicate row on every replay attempt instead of upserting, silently
+    breaking the idempotency guarantee UserRepository.upsert_user
+    documents. This must fail fast instead."""
+    repo = PostgresUserRepository(_dummy_connect)
+
+    for bad_sub in (None, ""):
+        try:
+            repo.upsert_user(cognito_sub=bad_sub, email="a@example.com", username="a", attributes={})
+            assert False, f"expected ValueError for cognito_sub={bad_sub!r}"
+        except ValueError as exc:
+            assert "cognito_sub" in str(exc)
+
+
 def test_postgres_repository_defaults_to_its_own_connection_module_if_no_connect_fn_given():
     """PostgresUserRepository() with no args should fall back to this
     example's own connection.get_connection -- this is what makes

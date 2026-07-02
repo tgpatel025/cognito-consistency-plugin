@@ -41,6 +41,7 @@ repository makes, not a contract this factory enforces.
 import os
 import importlib
 
+from common.repositories.base import UserRepository
 from common.sync_service import SyncService
 
 
@@ -72,5 +73,13 @@ def build_sync_service() -> SyncService:
 
     repository_class = _load_custom_repository_class(custom_class_path)
     repository = repository_class()
+
+    if not isinstance(repository, UserRepository):
+        raise TypeError(
+            f"REPOSITORY_CLASS ({custom_class_path!r}) does not implement "
+            "UserRepository (src/common/repositories/base.py). Subclass "
+            "UserRepository so missing methods are caught at startup, not "
+            "as an AttributeError on the first real sync event."
+        )
 
     return SyncService(repository)

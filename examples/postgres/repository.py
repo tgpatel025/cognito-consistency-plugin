@@ -95,6 +95,9 @@ class PostgresUserRepository(UserRepository):
         username: Optional[str],
         attributes: dict,
     ) -> dict:
+        if not cognito_sub:
+            raise ValueError("upsert_user requires a non-empty cognito_sub")
+
         now = datetime.now(timezone.utc)
         with self._cursor() as cur:
             cur.execute(

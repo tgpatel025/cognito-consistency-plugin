@@ -11,7 +11,9 @@ every discrepancy into one of four drift categories:
                          (e.g. user was deleted directly in Cognito)
   ATTRIBUTE_MISMATCH   - both exist, but email/username/attributes differ
                          (e.g. post_authentication trigger never fired,
-                         or an admin edited attributes out-of-band)
+                         or any Cognito attribute -- custom or standard,
+                         including e.g. email_verified -- was changed
+                         out-of-band and never synced)
   IN_SYNC              - no action needed
 
 This module is intentionally side-effect-free for the "detect" phase --
@@ -98,6 +100,8 @@ def find_drift(cognito_users: list, db_users: list) -> list:
             for field_name in COMPARED_FIELDS
             if cognito_user.get(field_name) != db_user.get(field_name)
         ]
+        if cognito_user.get("attributes") != db_user.get("attributes"):
+            mismatches.append("attributes")
         if mismatches:
             drift.append(
                 DriftRecord(

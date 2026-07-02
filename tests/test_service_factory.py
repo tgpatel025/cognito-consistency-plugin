@@ -142,3 +142,29 @@ def test_repository_requiring_constructor_arguments_raises_clear_typeerror():
             pass
 
     del sys.modules["test_requires_arg_repo_module"]
+
+
+def test_repository_class_not_implementing_userrepository_raises_clear_typeerror():
+    """A class that doesn't subclass UserRepository bypasses Python's ABC
+    enforcement entirely, so it can be missing methods and still
+    construct successfully. Without this check the failure only shows
+    up later, deep inside SyncService, as an AttributeError misattributed
+    to a transient failure -- see common/sync_service.py's audit-log
+    isolation. This must fail loudly at startup instead."""
+
+    class NotARepository:
+        def __init__(self):
+            pass
+
+    module = type(sys)("test_not_a_repository_module")
+    module.NotARepository = NotARepository
+    sys.modules["test_not_a_repository_module"] = module
+
+    with patch.dict(os.environ, {"REPOSITORY_CLASS": "test_not_a_repository_module:NotARepository"}):
+        try:
+            service_factory.build_sync_service()
+            assert False, "expected TypeError for a class not implementing UserRepository"
+        except TypeError as exc:
+            assert "UserRepository" in str(exc)
+
+    del sys.modules["test_not_a_repository_module"]

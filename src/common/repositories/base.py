@@ -9,7 +9,7 @@ reconciler, replay) needs to do the same handful of things: upsert a
 user record, log a sync event, list all synced users, and manage
 dead letters. Originally these were raw SQL statements against a fixed
 `app_users` / `sync_audit_log` / `sync_dead_letters` Postgres schema
-baked directly into common/db.py.
+baked directly into the core library.
 
 That's fine for a demo, but wrong for something meant to be dropped into
 someone else's existing system: a real adopter already has a `users`
@@ -100,12 +100,12 @@ class UserRepository(ABC):
         status: str,
         detail: Optional[str] = None,
     ) -> None:
-        """Append an audit record. Implementations should make this
+        """Append-only audit record. Implementations should make this
         append-only (never update/delete existing rows) since it's the
-        compliance trail. Callers treat a raised exception here as
-        recoverable/non-fatal -- see common/db.py's PostgresUserRepository
-        for why the audit write must never be allowed to mask or roll
-        back a successful upsert_user call."""
+        compliance trail. Callers (specifically SyncService, see
+        common/sync_service.py) treat a raised exception here as
+        recoverable/non-fatal -- the audit write must never be allowed
+        to mask or roll back a successful upsert_user call."""
         raise NotImplementedError
 
     # -- Dead-letter / replay -------------------------------------------

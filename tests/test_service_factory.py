@@ -3,12 +3,11 @@ Tests for common/service_factory.py: the single place that decides
 which UserRepository implementation backs SyncService.
 
 Covers:
-  - default path (no REPOSITORY_CLASS set) uses PostgresUserRepository
-  - custom path loads a class by dotted "module:ClassName" string
-  - custom classes with either constructor signature (connect_fn arg,
-    or no-arg) both work
-  - malformed REPOSITORY_CLASS values raise a clear error rather than
-    an opaque one
+  - REPOSITORY_CLASS unset -> raises RuntimeError immediately, with a
+    clear, actionable message (there is no default repository)
+  - REPOSITORY_CLASS set -> loads the class by dotted "module:ClassName"
+    string and constructs it with zero arguments
+  - malformed REPOSITORY_CLASS values raise a clear ValueError
 """
 
 import sys
@@ -18,21 +17,16 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import common.service_factory as service_factory
-from common.repositories.postgres import PostgresUserRepository
 from common.repositories.base import UserRepository
 
 
 class _FakeCompleteRepository(UserRepository):
-    """A minimal, complete UserRepository used only to test that
-    service_factory correctly loads and instantiates a custom class --
-    distinct from PostgresUserRepository so isinstance checks are
-    meaningful. Kept local to this test file (registered into
-    sys.modules below) rather than borrowing example_custom_schema.py,
-    since that file is intentionally partial and doesn't satisfy the
-    full interface -- see its module docstring."""
+    """A minimal, complete, zero-argument-constructible UserRepository
+    used only to test that service_factory correctly loads and
+    instantiates a custom class."""
 
-    def __init__(self, connect_fn):
-        self.connect_fn = connect_fn
+    def __init__(self):
+        self.constructed = True
 
     def upsert_user(self, cognito_sub, email, username, attributes):
         return {"id": 1, "inserted": True}
@@ -67,34 +61,53 @@ _fake_module.FakeCompleteRepository = _FakeCompleteRepository
 sys.modules["test_fake_complete_repo_module"] = _fake_module
 
 
-def test_default_repository_is_postgres_when_no_repository_class_set():
+def test_raises_clear_error_when_repository_class_not_set():
+    """There is no default repository -- this must fail loudly and
+    immediately, not silently fall back to any particular database."""
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("REPOSITORY_CLASS", None)
-        service = service_factory.build_sync_service()
+        try:
+            service_factory.build_sync_service()
+            assert False, "expected RuntimeError when REPOSITORY_CLASS is unset"
+        except RuntimeError as exc:
+            assert "REPOSITORY_CLASS is not set" in str(exc)
+            assert "UserRepository" in str(exc)
 
-    assert isinstance(service.repository, PostgresUserRepository)
 
-
-def test_custom_repository_class_is_loaded_and_used():
+def test_custom_repository_class_is_loaded_and_constructed_with_no_arguments():
     with patch.dict(os.environ, {
         "REPOSITORY_CLASS": "test_fake_complete_repo_module:FakeCompleteRepository"
     }):
         service = service_factory.build_sync_service()
 
     assert isinstance(service.repository, _FakeCompleteRepository)
+    assert service.repository.constructed is True
 
 
-def test_custom_repository_with_no_arg_constructor_is_supported():
-    """Some implementations manage their own connection setup and take
-    no constructor arguments (e.g. a DynamoDB repository using boto3's
-    default credential chain rather than a psycopg2 connect_fn)."""
+def test_malformed_repository_class_raises_clear_error():
+    with patch.dict(os.environ, {"REPOSITORY_CLASS": "not-a-valid-dotted-path"}):
+        try:
+            service_factory.build_sync_service()
+            assert False, "expected ValueError for malformed REPOSITORY_CLASS"
+        except ValueError as exc:
+            assert "module.path:ClassName" in str(exc)
 
-    class NoArgRepository(UserRepository):
-        def __init__(self):
-            self.constructed = True
+
+def test_repository_requiring_constructor_arguments_raises_clear_typeerror():
+    """The factory always constructs with zero arguments now -- a
+    repository whose constructor requires arguments (e.g. the old
+    connect_fn pattern) must fail with a clear TypeError, not
+    something the factory silently papers over. Repositories needing
+    setup should default their own arguments internally (see
+    examples/postgres/repository.py's connect_fn=None pattern) or read
+    from env vars/module-level config themselves."""
+
+    class RequiresArgRepository(UserRepository):
+        def __init__(self, something_required):
+            pass
 
         def upsert_user(self, cognito_sub, email, username, attributes):
-            return {"id": 1, "inserted": True}
+            return {}
 
         def get_all_users(self):
             return []
@@ -117,24 +130,15 @@ def test_custom_repository_with_no_arg_constructor_is_supported():
         def record_dead_letter_failure(self, dead_letter_id, error):
             pass
 
-    # Inject the class into a real module namespace so the dotted-path
-    # loader can import it.
-    sys.modules["test_no_arg_repo_module"] = type(sys)("test_no_arg_repo_module")
-    sys.modules["test_no_arg_repo_module"].NoArgRepository = NoArgRepository
+    module = type(sys)("test_requires_arg_repo_module")
+    module.RequiresArgRepository = RequiresArgRepository
+    sys.modules["test_requires_arg_repo_module"] = module
 
-    with patch.dict(os.environ, {"REPOSITORY_CLASS": "test_no_arg_repo_module:NoArgRepository"}):
-        service = service_factory.build_sync_service()
-
-    assert isinstance(service.repository, NoArgRepository)
-    assert service.repository.constructed is True
-
-    del sys.modules["test_no_arg_repo_module"]
-
-
-def test_malformed_repository_class_raises_clear_error():
-    with patch.dict(os.environ, {"REPOSITORY_CLASS": "not-a-valid-dotted-path"}):
+    with patch.dict(os.environ, {"REPOSITORY_CLASS": "test_requires_arg_repo_module:RequiresArgRepository"}):
         try:
             service_factory.build_sync_service()
-            assert False, "expected ValueError for malformed REPOSITORY_CLASS"
-        except ValueError as exc:
-            assert "module.path:ClassName" in str(exc)
+            assert False, "expected TypeError for a repository requiring constructor arguments"
+        except TypeError:
+            pass
+
+    del sys.modules["test_requires_arg_repo_module"]

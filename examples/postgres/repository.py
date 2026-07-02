@@ -1,18 +1,31 @@
 """
-PostgresUserRepository: the reference implementation of UserRepository,
-matching the exact schema in infra/localstack/schema.sql
+PostgresUserRepository: an EXAMPLE implementation of UserRepository,
+matching the schema in schema.sql in this same directory
 (app_users / sync_audit_log / sync_dead_letters).
 
-This is meant to be runnable as-is (it's what the LocalStack demo and
-the module's Lambdas use by default) AND to serve as a template for
-writing your own repository against a different schema or engine -- see
-docs/extending-the-repository.md for a guide, and
-repositories/example_custom_schema.py for a worked example against a
-differently-shaped, pre-existing `users` table.
+This is not part of the core library. The core library
+(src/common/repositories/base.py) ships zero database drivers and zero
+default repository -- see docs/extending-the-repository.md for why.
+This example exists so:
+  - the LocalStack demo (infra/localstack) has something concrete to run
+  - anyone who wants a working starting point can copy this directory
+    and adapt it, rather than writing a UserRepository from a blank page
+
+To use this example, install its own requirements.txt (psycopg2-binary
+is NOT part of the core project's dependencies) and either import it
+directly or set REPOSITORY_CLASS to
+"examples.postgres.repository:PostgresUserRepository" with this
+directory on your Python path.
+
+See examples/custom_schema_partial/repository.py for a second example
+against a deliberately different, non-Postgres-shaped schema, proving
+the interface doesn't assume this one's table/column names.
 """
 
 import json
 import logging
+import os
+import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -20,20 +33,45 @@ from typing import Any, Optional
 import psycopg2
 import psycopg2.extras
 
-from common.repositories.base import UserRepository
+# This example lives outside src/ (see docs/extending-the-repository.md
+# for why the core library and examples are kept in separate top-level
+# directories). Add src/ to the path so UserRepository can be imported
+# without requiring this example to be installed as part of the package.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
+
+from common.repositories.base import UserRepository  # noqa: E402
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
 class PostgresUserRepository(UserRepository):
-    def __init__(self, connect_fn):
+    def __init__(self, connect_fn=None):
         """connect_fn: a zero-argument callable returning a new
-        psycopg2 connection. Passed in rather than constructed here so
-        credential-sourcing (Secrets Manager vs. plaintext env vars,
-        see common/db.py) stays decoupled from the repository's SQL --
-        the repository doesn't need to know or care where the
-        connection came from."""
+        psycopg2 connection. Defaults to this example's own
+        connection.get_connection (Secrets Manager or plaintext env
+        vars) if not provided -- this default exists so
+        REPOSITORY_CLASS="examples.postgres.repository:PostgresUserRepository"
+        works with the factory's zero-argument instantiation
+        (see common/service_factory.py). Pass an explicit connect_fn to
+        override this, e.g. in tests."""
+        if connect_fn is None:
+            try:
+                from .connection import get_connection
+            except ImportError:
+                # Relative import fails if this module was imported
+                # directly (e.g. `import repository` after adding this
+                # directory to sys.path) rather than as part of a
+                # package (e.g. via importlib.import_module on
+                # "examples.postgres.repository", which is how
+                # service_factory.py loads REPOSITORY_CLASS). Fall back
+                # to a path-based import so this constructor works
+                # either way.
+                import sys as _sys
+                import os as _os
+                _sys.path.insert(0, _os.path.dirname(__file__))
+                from connection import get_connection
+            connect_fn = get_connection
         self._connect_fn = connect_fn
 
     @contextmanager

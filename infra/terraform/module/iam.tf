@@ -29,6 +29,7 @@ data "aws_iam_policy_document" "lambda_assume_role" {
 }
 
 data "aws_iam_policy_document" "read_db_secret" {
+  count = var.db_secret_arn != "" ? 1 : 0
   statement {
     effect    = "Allow"
     actions   = ["secretsmanager:GetSecretValue"]
@@ -71,9 +72,10 @@ resource "aws_iam_role_policy_attachment" "post_confirmation_basic" {
 }
 
 resource "aws_iam_role_policy" "post_confirmation_secret" {
+  count  = var.db_secret_arn != "" ? 1 : 0
   name   = "${var.project_name}-post-confirmation-secret"
   role   = aws_iam_role.post_confirmation.id
-  policy = data.aws_iam_policy_document.read_db_secret.json
+  policy = data.aws_iam_policy_document.read_db_secret[0].json
 }
 
 # ---------------------------------------------------------------------------
@@ -94,9 +96,10 @@ resource "aws_iam_role_policy_attachment" "post_authentication_basic" {
 }
 
 resource "aws_iam_role_policy" "post_authentication_secret" {
+  count  = var.db_secret_arn != "" ? 1 : 0
   name   = "${var.project_name}-post-authentication-secret"
   role   = aws_iam_role.post_authentication.id
-  policy = data.aws_iam_policy_document.read_db_secret.json
+  policy = data.aws_iam_policy_document.read_db_secret[0].json
 }
 
 # ---------------------------------------------------------------------------
@@ -114,9 +117,10 @@ resource "aws_iam_role_policy_attachment" "reconciler_basic" {
 }
 
 resource "aws_iam_role_policy" "reconciler_secret" {
+  count  = var.db_secret_arn != "" ? 1 : 0
   name   = "${var.project_name}-reconciler-secret"
   role   = aws_iam_role.reconciler.id
-  policy = data.aws_iam_policy_document.read_db_secret.json
+  policy = data.aws_iam_policy_document.read_db_secret[0].json
 }
 
 resource "aws_iam_role_policy" "reconciler_cognito" {

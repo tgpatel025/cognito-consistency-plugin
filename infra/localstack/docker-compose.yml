@@ -1,8 +1,11 @@
 version: "3.8"
 
 # Local demo environment: LocalStack simulates Cognito + Lambda, a real
-# Postgres container plays the app database. This lets anyone clone the
-# repo and run the whole system with no AWS account and no cost.
+# Postgres container plays the app database, running the Postgres
+# EXAMPLE repository's schema (../../examples/postgres/schema.sql) --
+# the core library itself has no default schema or database. This lets
+# anyone clone the repo and run the whole system with no AWS account and
+# no cost.
 #
 # Usage: see docs/local-demo.md
 
@@ -30,4 +33,4 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=identity_platform
     volumes:
-      - "./schema.sql:/docker-entrypoint-initdb.d/schema.sql"
+      - "../../examples/postgres/schema.sql:/docker-entrypoint-initdb.d/schema.sql"

@@ -148,18 +148,21 @@ This guarantee is enforced once, in `SyncService`, rather than inside
 every repository implementation — see decision #9 for why that
 placement matters.
 
-**Remaining gap**: in `PostgresUserRepository`, the user-record write and
-the audit-log write are two separate transactions (two separate
-`db_cursor()` calls). There's a narrow window — the Lambda being frozen
-or killed between the two calls — where the audit trail permanently
-under-reports relative to the user table, with no automatic way to
-detect or backfill it. This is judged an acceptable residual risk for a
-demo (a single function call is a small window), but a stricter guarantee would
-need either a transactional outbox (write the intended audit event in
-the *same* transaction as `app_users`, as a row in an outbox table, then
-have a separate process publish it to `sync_audit_log`) or deriving audit
-events from a CDC/WAL stream on `app_users` instead of writing them from
-application code at all.
+**Remaining gap**: in the shipped Postgres example
+(`examples/postgres/repository.py::PostgresUserRepository`), the
+user-record write and the audit-log write are two separate transactions
+(two separate `_cursor()` calls). There's a narrow window — the Lambda
+being frozen or killed between the two calls — where the audit trail
+permanently under-reports relative to the user table, with no automatic
+way to detect or backfill it. This is judged an acceptable residual risk
+for an example (a single function call is a small window), but a
+stricter guarantee would need either a transactional outbox (write the
+intended audit event in the *same* transaction as `app_users`, as a row
+in an outbox table, then have a separate process publish it to
+`sync_audit_log`) or deriving audit events from a CDC/WAL stream on
+`app_users` instead of writing them from application code at all. This
+is specific to how that example is written — a different `UserRepository`
+implementation could make this atomic if its engine supports it.
 
 ### 6. Silent failures are alarmable, not just logged
 
@@ -263,7 +266,7 @@ AWS resources, let alone ones this module would have to help create.
 
 Everything up to this point still assumed one specific Postgres schema
 (`app_users` / `sync_audit_log` / `sync_dead_letters`) baked directly
-into raw SQL inside `common/db.py`. That's the same mistake the
+into raw SQL inside the core library. That's the same mistake the
 Terraform module used to make with its own Cognito pool and RDS
 instance (decision #8) — a real adopter already has a `users` table,
 almost certainly with different columns, a different primary key, and
@@ -274,30 +277,9 @@ The fix follows the same shape: `common/repositories/base.py` defines
 `UserRepository`, an abstract interface covering exactly the operations
 the rest of the codebase needs (`upsert_user`, `get_all_users`,
 `log_sync_event`, and the dead-letter/replay methods). Every Lambda
-handler, the reconciler, and replay now depend on this interface via
-`SyncService` (`common/sync_service.py`) — never on
-`PostgresUserRepository` or any specific schema directly.
-
-`PostgresUserRepository` (`common/repositories/postgres.py`) is the
-reference implementation, matching the schema this project ships with —
-it's the one used by default, so a fresh clone and the LocalStack demo
-work with zero repository code to write.
-
-`ExampleCustomSchemaRepositoryPartial`
-(`common/repositories/example_custom_schema.py`) is a second,
-*intentionally partial* implementation against a deliberately
-different, realistic pre-existing schema (different table name, integer
-PK instead of `cognito_sub` as key, a generic `failed_jobs` table reused
-instead of a dedicated one). It implements only enough methods
-(`upsert_user`, `get_all_users`, `enqueue_dead_letter`) to demonstrate
-the two mapping patterns that matter — column renaming and reusing an
-existing generic table — proving the interface is genuinely
-schema-agnostic, not just a rename of the same three tables. It stays
-partial rather than a second full implementation: a complete copy would
-mostly duplicate `postgres.py`'s structure under different names, and
-two full implementations would need to be kept in sync by hand every
-time the interface grows a new method. See that file's docstring, and
-`docs/extending-the-repository.md`, for the reasoning.
+handler, the reconciler, and replay depend on this interface via
+`SyncService` (`common/sync_service.py`) — never on any concrete
+implementation directly.
 
 **Where cross-cutting behavior lives**: some logic — like audit-log
 failures never masking a successful upsert (decision on failure
@@ -308,18 +290,71 @@ potentially gotten wrong) inside every custom repository someone writes.
 A custom `UserRepository` only needs to get its own storage calls right;
 the orchestration around them is already correct.
 
-**Configuration**: which repository is used is decided by
-`common/service_factory.py`, via the `REPOSITORY_CLASS` environment
-variable (`"module.path:ClassName"`), or the Terraform module's
-`repository_class` variable. Defaults to `PostgresUserRepository` if
-unset, so the LocalStack demo and a fresh clone work with zero
-configuration.
-
 **Trade-off**: this adds a layer of indirection (interface → factory →
 concrete implementation) that a single-schema project wouldn't need.
 That's an explicit cost accepted for reusability — see
 [`docs/extending-the-repository.md`](./extending-the-repository.md) for
 the adoption guide this trade-off is meant to pay for.
+
+### 10. No default repository, and examples live outside `src/`
+
+The first version of decision #9 shipped `PostgresUserRepository` as a
+*default* — used automatically if `REPOSITORY_CLASS` wasn't set, so a
+fresh clone and the LocalStack demo worked with zero configuration. That
+reasoning didn't survive scrutiny: a "default" is still an opinion, and
+this one had a real, one-sided cost. Every deployment carried
+`psycopg2-binary` (a compiled binary dependency) in its core
+`requirements.txt` and in every Lambda's vendored dependencies, whether
+or not that deployment used Postgres — someone building a DynamoDB
+repository paid for a driver they'd never call. It also meant
+`common/db.py`, despite its docstring calling it "schema-independent,"
+was never actually *engine*-independent: it imported `psycopg2` directly
+at module level. Owning a default database driver is exactly the kind
+of opinion the interface was built to avoid, even if the schema on top
+of it stayed pluggable.
+
+**What changed**:
+- `common/service_factory.py::build_sync_service()` now **requires**
+  `REPOSITORY_CLASS` to be set. If it's unset, it raises a `RuntimeError`
+  immediately — at Lambda cold-start (module import time), not silently
+  on first invocation — with a message pointing at the docs and the
+  shipped example. A misconfigured deployment should fail loudly and
+  early, not accept traffic it can't actually sync.
+- The factory constructs your class with **zero arguments**:
+  `repository_class()`. There is no shared `connect_fn` convention the
+  factory imposes — how a repository connects to its database is
+  entirely up to that repository's own `__init__`. This also simplified
+  the factory itself: no more "try a connect_fn argument, fall back to
+  no-args" `TypeError`-catching logic.
+- `common/db.py` (the old shared connection helper) is deleted from
+  core entirely. Its logic moved to
+  `examples/postgres/connection.py` — now fully owned by that example,
+  not the library.
+- The two repositories that previously lived in
+  `src/common/repositories/` (`postgres.py`,
+  `example_custom_schema.py`) moved to a new top-level
+  [`examples/`](../examples) directory
+  (`examples/postgres/repository.py`,
+  `examples/custom_schema_partial/repository.py`), each with their own
+  `requirements.txt` where relevant. `src/common/repositories/` now
+  contains only `base.py` — the interface, nothing else.
+- Core `requirements.txt` has zero database driver dependencies.
+
+**Why examples live outside `src/` entirely**, not just "unregistered as
+a default": mixing runnable example code into the same directories as
+the core library is confusing to navigate — it's not always obvious at a
+glance which files are the library a consumer depends on and which are
+starting points meant to be copied and modified. A separate top-level
+directory makes that distinction structural rather than something you
+have to infer from docstrings.
+
+**Cost of this change**: the project is no longer "clone and run" with
+zero configuration — even the LocalStack demo now requires setting
+`REPOSITORY_CLASS` and installing `examples/postgres/requirements.txt`
+explicitly (see `docs/local-demo.md`). That's accepted as the correct
+trade-off: a slightly less immediate demo experience, in exchange for a
+core library that never carries an opinion — or a dependency — it didn't
+ask for.
 
 ## What's out of scope for this demo (and why)
 

@@ -1,0 +1,6 @@
+# Dependencies for the Postgres EXAMPLE repository only.
+# The core library (src/) has zero database driver dependencies -- see
+# the top-level requirements.txt and docs/extending-the-repository.md.
+# Install this only if you're using this example as-is or as a starting
+# point for your own Postgres-backed repository.
+psycopg2-binary>=2.9

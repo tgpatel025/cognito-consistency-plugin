@@ -41,21 +41,28 @@ variable "attach_post_authentication_trigger" {
 }
 
 # ---------------------------------------------------------------------------
-# Database connectivity (existing Postgres instance -- not created here)
+# Database connectivity (existing database -- not created here)
 # ---------------------------------------------------------------------------
+# This module has no opinion on your database or how your repository
+# connects to it -- db_secret_arn is optional and only wires up IAM
+# access to a Secrets Manager secret, which is one common way to store
+# credentials but not the only one. If your repository doesn't use
+# Secrets Manager (e.g. it uses DynamoDB via the Lambda's default IAM
+# role, or reads credentials some other way), leave this empty and use
+# additional_iam_policy_json for whatever access it actually needs.
 variable "db_secret_arn" {
-  description = "ARN of a Secrets Manager secret containing DB connection details (expects JSON keys: host, port, dbname, username, password). This module's Lambdas are granted secretsmanager:GetSecretValue on exactly this ARN -- nothing broader."
-  type        = string
-}
-
-variable "repository_class" {
-  description = "Dotted path 'module.path:ClassName' to a custom UserRepository implementation (see src/common/repositories/base.py and docs/extending-the-repository.md). Leave empty to use the default PostgresUserRepository, matching infra/localstack/schema.sql. Your custom module must be bundled into the Lambda deployment package alongside src/ (see scripts/build_lambda_deps.sh for the pattern used for third-party dependencies)."
+  description = "Optional: ARN of a Secrets Manager secret your repository reads for DB connection details. If set, this module's Lambdas are granted secretsmanager:GetSecretValue on exactly this ARN. Leave empty if your repository doesn't use Secrets Manager."
   type        = string
   default     = ""
 }
 
+variable "repository_class" {
+  description = "REQUIRED. Dotted path 'module.path:ClassName' to your UserRepository implementation (see src/common/repositories/base.py and docs/extending-the-repository.md). There is no default -- this module has no opinion on your database or schema. Your module must be bundled into the Lambda deployment package alongside src/ (see examples/postgres/prepare_for_lambda.sh for the pattern used to vendor an example's own dependencies, as a template for your own)."
+  type        = string
+}
+
 variable "additional_iam_policy_json" {
-  description = "Extra IAM policy JSON (as produced by data.aws_iam_policy_document) attached to ALL THREE Lambda roles, for permissions your custom UserRepository needs that this module can't predict -- e.g. dynamodb:PutItem/GetItem if your repository talks to DynamoDB instead of Postgres via Secrets Manager. Leave empty (default) if your repository only needs the secretsmanager:GetSecretValue permission already granted."
+  description = "Extra IAM policy JSON (as produced by data.aws_iam_policy_document) attached to ALL THREE Lambda roles, for whatever permissions your UserRepository implementation needs -- e.g. dynamodb:PutItem/GetItem for a DynamoDB-backed repository, or secretsmanager:GetSecretValue if you're not using db_secret_arn's built-in grant. Leave empty if db_secret_arn alone covers what you need."
   type        = string
   default     = ""
 }

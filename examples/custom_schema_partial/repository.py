@@ -1,8 +1,9 @@
 """
 Worked example (partial, not a full implementation) of a UserRepository
-against a pre-existing schema that looks nothing like
-infra/localstack/schema.sql -- proving the interface is genuinely
-schema-agnostic, not just a rename of the same three tables.
+against a pre-existing schema that looks nothing like the Postgres
+example's schema (examples/postgres/schema.sql) -- proving the interface
+is genuinely schema-agnostic, not just a rename of the same three
+tables.
 
 Imagined pre-existing schema (a typical "we had a users table before we
 ever heard of this project" shape):
@@ -47,15 +48,22 @@ The remaining five interface methods (log_sync_event,
 fetch_unreplayed_dead_letters, fetch_stuck_dead_letters,
 mark_dead_letter_replayed, record_dead_letter_failure) follow the exact
 same two patterns applied to the `failed_jobs` table -- see
-postgres.py for their full logic against the reference schema; only the
-table/column names change, not the shape of the SQL. This file stays
-intentionally partial rather than a second complete implementation,
-since a full copy would just duplicate postgres.py's structure with
-different names and create two files that must be kept in sync if the
-interface ever grows a new method.
+examples/postgres/repository.py for their full logic against that
+example's schema; only the table/column names change, not the shape of
+the SQL. This file stays intentionally partial rather than a second
+complete implementation, since a full copy would just duplicate that
+file's structure with different names and create two files that must be
+kept in sync if the interface ever grows a new method.
 
 Not meant to be imported/run as-is -- your real schema will differ from
 this imagined one. Copy and adapt the patterns shown here.
+
+This example also demonstrates that its own connection setup doesn't
+have to look like the Postgres example's connection.py at all -- see
+docs/extending-the-repository.md's "Constructor signature" section for
+why the connection/credential logic is entirely up to the repository
+author, not something the core library provides or expects a particular
+shape for.
 """
 
 import json
@@ -156,6 +164,7 @@ class ExampleCustomSchemaRepositoryPartial:
     # mark_dead_letter_replayed, and record_dead_letter_failure would follow
     # the same two patterns above, querying/updating `failed_jobs` filtered
     # by job_type = 'cognito_sync' -- omitted here to keep this example
-    # focused on the patterns rather than duplicating postgres.py's full
-    # structure under different names. See postgres.py for their complete
-    # logic against the reference schema.
+    # focused on the patterns rather than duplicating the Postgres
+    # example's full structure under different names. See
+    # examples/postgres/repository.py for their complete logic against
+    # that example's reference schema.

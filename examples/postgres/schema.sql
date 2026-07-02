@@ -1,4 +1,8 @@
--- Schema for the Cognito Consistency Platform demo.
+-- Schema for the Postgres EXAMPLE repository (examples/postgres/repository.py).
+-- This is not a core project schema -- the core library
+-- (src/common/repositories/base.py) has no default database or
+-- schema. This is what the LocalStack demo runs against, and a
+-- starting point to copy/adapt if Postgres fits your own setup.
 --
 -- Three tables:
 --   app_users        - the "application side" mirror of Cognito identities

@@ -4,10 +4,17 @@ __pycache__/
 .venv/
 venv/
 
-# Vendored Lambda deps (installed by scripts/build_lambda_deps.sh before deploy)
+# Vendored Lambda deps (installed by examples/postgres/prepare_for_lambda.sh
+# or your own equivalent script, before deploy)
+src/examples_postgres/
 src/boto3*/
 src/psycopg2*/
 src/botocore*/
+src/jmespath*/
+src/dateutil*/
+src/s3transfer*/
+src/six.py
+src/urllib3*/
 src/*.dist-info/
 src/*.libs/
 src/bin/

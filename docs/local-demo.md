@@ -1,8 +1,10 @@
 # Running the demo locally (no AWS account needed)
 
 This uses [LocalStack](https://localstack.cloud) to simulate Cognito and a
-real Postgres container for the app database, so the whole system can be
-exercised end-to-end for free.
+real Postgres container for the app database, running the **Postgres
+example** repository (`examples/postgres/`) — the core library itself
+has no default database, so this demo explicitly configures which one
+to use, the same way any real deployment would.
 
 ## Prerequisites
 
@@ -20,13 +22,15 @@ docker compose up -d
 
 This starts:
 - LocalStack on `localhost:4566` (simulating Cognito, Lambda, EventBridge)
-- Postgres on `localhost:5432`, auto-initialized with `schema.sql`
+- Postgres on `localhost:5432`, auto-initialized with the Postgres
+  example's `schema.sql` (`../../examples/postgres/schema.sql`)
 
 ## 2. Install Python dependencies
 
 ```bash
 cd ../..   # back to repo root
-pip install -r requirements.txt
+pip install -r requirements.txt                    # core library
+pip install -r examples/postgres/requirements.txt   # the example this demo uses
 ```
 
 ## 3. Create a demo Cognito user pool + test user
@@ -43,9 +47,10 @@ than a quick demo needs). This intentionally simulates the drift
 scenario: a user exists in Cognito but the app database doesn't know
 about them yet.
 
-## 4. Set database connection env vars
+## 4. Configure the repository and database connection
 
 ```bash
+export REPOSITORY_CLASS="examples.postgres.repository:PostgresUserRepository"
 export DB_HOST=localhost
 export DB_PORT=5432
 export DB_NAME=identity_platform
@@ -54,11 +59,19 @@ export DB_PASSWORD=postgres
 export AWS_ENDPOINT_URL=http://localhost:4566
 ```
 
+`REPOSITORY_CLASS` is required — without it, `common/service_factory.py`
+raises immediately (see `docs/extending-the-repository.md`). The
+`DB_HOST`/etc. vars are read by the Postgres example's own connection
+helper (`examples/postgres/connection.py`), not by the core library.
+
 ## 5. Run the reconciler in report-only mode
 
+Run from the repo root (not `src/`) with `PYTHONPATH=src`, since
+`examples.postgres.repository` needs the repo root importable and
+`reconciler.run` needs `src` importable — both at once:
+
 ```bash
-cd src
-python -m reconciler.run --user-pool-id $USER_POOL_ID --endpoint-url $AWS_ENDPOINT_URL
+PYTHONPATH=src python -m reconciler.run --user-pool-id $USER_POOL_ID --endpoint-url $AWS_ENDPOINT_URL
 ```
 
 Expected output: one `MISSING_IN_DB` record for `alice`, since she exists
@@ -67,7 +80,7 @@ in Cognito but not yet in Postgres.
 ## 6. Apply the fix
 
 ```bash
-python -m reconciler.run --user-pool-id $USER_POOL_ID --endpoint-url $AWS_ENDPOINT_URL --fix
+PYTHONPATH=src python -m reconciler.run --user-pool-id $USER_POOL_ID --endpoint-url $AWS_ENDPOINT_URL --fix
 ```
 
 Re-run step 5 and the drift report should now be empty.
@@ -90,7 +103,7 @@ aws --endpoint-url=$AWS_ENDPOINT_URL --region us-east-1 cognito-idp admin-update
   --username alice \
   --user-attributes Name=email,Value=alice-updated@example.com
 
-python -m reconciler.run --user-pool-id $USER_POOL_ID --endpoint-url $AWS_ENDPOINT_URL
+PYTHONPATH=src python -m reconciler.run --user-pool-id $USER_POOL_ID --endpoint-url $AWS_ENDPOINT_URL
 ```
 
 Expected: an `ATTRIBUTE_MISMATCH` record showing the `email` field out of
@@ -109,8 +122,8 @@ INSERT INTO sync_dead_letters (cognito_sub, payload, error, occurred_at, replaye
 VALUES ('demo-sub-123', '{\"email\": \"bob@example.com\", \"username\": \"bob\"}', 'simulated DB timeout', now(), false);
 "
 
-python -m reconciler.replay --dry-run   # preview
-python -m reconciler.replay              # actually replay
+PYTHONPATH=src python -m reconciler.replay --dry-run   # preview
+PYTHONPATH=src python -m reconciler.replay              # actually replay
 ```
 
 ### Simulating a poison-pill (permanently failing) dead letter
@@ -127,7 +140,7 @@ INSERT INTO sync_dead_letters (cognito_sub, payload, error, occurred_at, replaye
 VALUES ('bad-sub', '{\"email\": null, \"username\": null}', 'simulated permanent failure', now(), false, 5);
 "
 
-python -m reconciler.replay --report
+PYTHONPATH=src python -m reconciler.replay --report
 ```
 
 Expected output: this entry shows up under "stuck" rather than being

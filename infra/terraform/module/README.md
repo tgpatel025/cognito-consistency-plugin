@@ -22,10 +22,10 @@ for why.
 | Input | What it is |
 |---|---|
 | `cognito_user_pool_arn` / `cognito_user_pool_id` | Your existing User Pool |
-| `db_secret_arn` | A Secrets Manager secret with `{host, port, dbname, username, password}` for your existing database |
+| `repository_class` | **Required.** Dotted path to your `UserRepository` implementation. There is no default — see [`docs/extending-the-repository.md`](../../../docs/extending-the-repository.md) and [`examples/postgres`](../../../examples/postgres) for a ready-to-use starting point |
+| `db_secret_arn` (optional) | ARN of a Secrets Manager secret, if your repository reads one — grants `secretsmanager:GetSecretValue` on exactly this ARN. Leave unset if your repository doesn't use Secrets Manager |
 | `vpc_config` (optional) | Subnet + security group IDs, if your database requires VPC placement |
-| `repository_class` (optional) | Dotted path to a custom `UserRepository` implementation if your schema differs from the default (see [`docs/extending-the-repository.md`](../../../docs/extending-the-repository.md)) |
-| `additional_iam_policy_json` (optional) | Extra IAM permissions your custom repository needs beyond Secrets Manager (e.g. DynamoDB access) |
+| `additional_iam_policy_json` (optional) | Any other IAM permissions your repository needs (e.g. DynamoDB access) |
 
 ## Usage
 
@@ -39,9 +39,16 @@ module "cognito_consistency" {
   cognito_user_pool_arn = aws_cognito_user_pool.main.arn
   cognito_user_pool_id  = aws_cognito_user_pool.main.id
 
-  # A secret containing your existing database's connection details.
-  # Expected JSON shape: {"host": "...", "port": 5432, "dbname": "...",
-  # "username": "...", "password": "..."}
+  # Your UserRepository implementation. Using the shipped Postgres
+  # example as-is here; see examples/postgres/prepare_for_lambda.sh for
+  # how its code and dependencies get bundled into the deployment
+  # package (it copies into src/examples_postgres/, hence the path below).
+  repository_class = "examples_postgres.repository:PostgresUserRepository"
+
+  # Only needed if your repository reads Secrets Manager (the shipped
+  # Postgres example does, via examples/postgres/connection.py).
+  # Expected JSON shape for that example: {"host": "...", "port": 5432,
+  # "dbname": "...", "username": "...", "password": "..."}
   db_secret_arn = aws_secretsmanager_secret.db_credentials.arn
 
   # Only needed if your database is in a private subnet (the common case)
@@ -98,9 +105,11 @@ Each Lambda gets its own role (not a shared one):
 
 | Function | Permissions |
 |---|---|
-| `post_confirmation` | CloudWatch Logs, `secretsmanager:GetSecretValue` on exactly `db_secret_arn` |
+| `post_confirmation` | CloudWatch Logs, plus `secretsmanager:GetSecretValue` on exactly `db_secret_arn` if you set it |
 | `post_authentication` | Same as above |
 | `reconciler` | Same as above, plus `cognito-idp:ListUsers` scoped to exactly `cognito_user_pool_arn`, plus `cloudwatch:PutMetricData` (AWS doesn't support resource-level scoping for this action) |
+
+All three roles also get `additional_iam_policy_json` attached if you set it — this is where any permissions your repository needs beyond (or instead of) Secrets Manager go.
 
 See [`iam.tf`](./iam.tf) for the exact policy documents.
 

@@ -29,10 +29,10 @@ terraform {
 locals {
   lambda_env = merge(
     {
-      DB_SECRET_ARN = var.db_secret_arn
-      USER_POOL_ID  = var.cognito_user_pool_id
+      USER_POOL_ID     = var.cognito_user_pool_id
+      REPOSITORY_CLASS = var.repository_class
     },
-    var.repository_class != "" ? { REPOSITORY_CLASS = var.repository_class } : {}
+    var.db_secret_arn != "" ? { DB_SECRET_ARN = var.db_secret_arn } : {}
   )
 }
 

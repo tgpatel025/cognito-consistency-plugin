@@ -1,14 +1,20 @@
 """
-Database connection layer -- credentials and connection creation only.
+Connection helper for the Postgres example repository.
 
-Schema-specific operations (upsert, audit logging, dead letters) used to
-live in this file directly, coupled to a fixed app_users/sync_audit_log/
-sync_dead_letters schema. They've moved to
-common/repositories/postgres.py::PostgresUserRepository, which
-implements the UserRepository interface (common/repositories/base.py).
-This file now only does what's genuinely schema-independent: deciding
-how to connect. See docs/extending-the-repository.md for why this split
-exists and how to plug in your own schema.
+This used to live in the core library (common/db.py) as a supposedly
+"schema-independent" connection layer -- but it was never actually
+engine-independent, since it imports psycopg2 directly. Anything that
+picks a database driver is an opinion the core library shouldn't ship,
+even if the schema on top of it is pluggable. It now lives here, fully
+owned by this example, alongside its own requirements.txt
+(psycopg2-binary) so the core library has zero database dependencies at
+all -- see docs/extending-the-repository.md.
+
+If you're adapting this example for your own schema, you'll typically
+keep a connection helper shaped like this (or write your own, or use a
+connection pool / your ORM's session management / whatever fits your
+stack) and pass it into your repository's constructor the same way
+PostgresUserRepository accepts connect_fn here.
 
 Design notes
 ------------
@@ -17,13 +23,11 @@ Design notes
   swap in RDS Proxy or a connection pool (e.g. pgbouncer) to avoid
   exhausting Postgres connections under concurrent Lambda invocations.
 - Credentials: if DB_SECRET_ARN is set, connection details are fetched
-  from Secrets Manager (the path used by infra/terraform/module -- see
-  its iam.tf for the exact, minimally-scoped secretsmanager:GetSecretValue
-  permission each function is granted). If DB_SECRET_ARN is not set,
-  falls back to plaintext DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD env
-  vars, which is what the LocalStack/local-demo path uses (see
-  docs/local-demo.md) since it avoids needing a real Secrets Manager
-  round-trip for a quick local run.
+  from Secrets Manager. If DB_SECRET_ARN is not set, falls back to
+  plaintext DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD env vars, which
+  is what the LocalStack/local-demo path uses (see docs/local-demo.md)
+  since it avoids needing a real Secrets Manager round-trip for a quick
+  local run.
 """
 
 import os
@@ -55,9 +59,7 @@ def get_connection():
     secret (DB_SECRET_ARN set) or from plaintext env vars (local/
     LocalStack fallback -- see module docstring above).
 
-    Passed as the connect_fn to PostgresUserRepository (or your own
-    UserRepository implementation, if it also needs a Postgres
-    connection) -- see common/service_factory.py.
+    Passed as the connect_fn to PostgresUserRepository's constructor.
     """
     secret_arn = os.environ.get("DB_SECRET_ARN")
 

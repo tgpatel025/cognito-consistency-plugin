@@ -17,11 +17,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install core dependencies
         run: pip install -r requirements.txt
 
-      - name: Run unit tests
+      - name: Run core library unit tests
         run: pytest tests/ -v
+
+      - name: Install Postgres example dependencies
+        run: pip install -r examples/postgres/requirements.txt
+
+      - name: Run example tests
+        run: pytest examples/postgres/tests/ examples/custom_schema_partial/tests/ -v
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3

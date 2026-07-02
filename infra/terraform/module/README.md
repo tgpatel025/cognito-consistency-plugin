@@ -1,4 +1,4 @@
-# Cognito Consistency Platform — Terraform module
+# Cognito Consistency Plugin — Terraform module
 
 Adds identity sync, drift reconciliation, and alerting on top of an
 **existing** Cognito User Pool and **existing** database. This module

@@ -1,4 +1,4 @@
-# Cognito Consistency Platform -- reusable module
+# Cognito Consistency Plugin -- reusable module
 #
 # Creates ONLY:
 #   - 3 Lambda functions (post_confirmation, post_authentication, reconciler)

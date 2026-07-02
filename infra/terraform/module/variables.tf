@@ -1,4 +1,4 @@
-# Input variables for the Cognito Consistency Platform module.
+# Input variables for the Cognito Consistency Plugin module.
 #
 # Design principle: this module owns only the pieces this project
 # actually invented -- the sync Lambdas, the reconciler, and the

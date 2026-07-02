@@ -1,4 +1,4 @@
-# Cognito Consistency Platform
+# Cognito Consistency Plugin
 
 A reference implementation of identity synchronization, drift detection,
 and reconciliation for applications that use **Amazon Cognito** for

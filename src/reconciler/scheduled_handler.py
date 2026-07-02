@@ -11,7 +11,7 @@ Storage: depends on SyncService, not on any specific database directly
 Alerting
 --------
 Drift counts are published as a CloudWatch custom metric
-(namespace: CognitoConsistencyPlatform, metric: DriftCount, broken down
+(namespace: CognitoConsistencyPlugin, metric: DriftCount, broken down
 by drift type via a dimension). This is what makes drift *alarmable*
 rather than something a human has to remember to check logs for --
 see infra/terraform/module/alerting.tf for the CloudWatch Alarm + SNS
@@ -34,7 +34,7 @@ from reconciler.drift import find_drift, summarize, DriftType
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-METRIC_NAMESPACE = "CognitoConsistencyPlatform"
+METRIC_NAMESPACE = "CognitoConsistencyPlugin"
 
 
 def publish_drift_metrics(summary: dict):

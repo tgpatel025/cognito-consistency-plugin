@@ -1,7 +1,7 @@
 # Market context: why this is a good engineering exercise, not a startup pitch
 
 This project started as an evaluation of a potential AWS Marketplace
-product idea: a dedicated "Cognito Consistency Platform" solving identity
+product idea: a dedicated "Cognito Consistency Plugin" solving identity
 sync, reconciliation, and audit for teams running Cognito + Postgres/MySQL.
 Before building anything, the idea was researched and pressure-tested —
 worth documenting that process honestly rather than presenting the code

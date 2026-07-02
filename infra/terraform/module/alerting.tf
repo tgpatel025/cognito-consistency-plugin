@@ -32,7 +32,7 @@ resource "aws_cloudwatch_log_metric_filter" "post_confirmation_critical" {
 
   metric_transformation {
     name      = "CriticalFailures"
-    namespace = "CognitoConsistencyPlatform"
+    namespace = "CognitoConsistencyPlugin"
     value     = "1"
     unit      = "Count"
   }
@@ -45,7 +45,7 @@ resource "aws_cloudwatch_log_metric_filter" "post_authentication_critical" {
 
   metric_transformation {
     name      = "CriticalFailures"
-    namespace = "CognitoConsistencyPlatform"
+    namespace = "CognitoConsistencyPlugin"
     value     = "1"
     unit      = "Count"
   }
@@ -54,7 +54,7 @@ resource "aws_cloudwatch_log_metric_filter" "post_authentication_critical" {
 resource "aws_cloudwatch_metric_alarm" "critical_failures" {
   alarm_name          = "${var.project_name}-critical-sync-failure"
   alarm_description   = "A sync event was lost entirely: both the primary sync and the dead-letter/audit fallback failed. No database record of this event exists. Investigate database connectivity immediately."
-  namespace           = "CognitoConsistencyPlatform"
+  namespace           = "CognitoConsistencyPlugin"
   metric_name         = "CriticalFailures"
   statistic           = "Sum"
   period              = 60
@@ -74,7 +74,7 @@ resource "aws_cloudwatch_metric_alarm" "critical_failures" {
 resource "aws_cloudwatch_metric_alarm" "drift_accumulation" {
   alarm_name          = "${var.project_name}-drift-accumulation"
   alarm_description   = "Cognito <-> database drift has exceeded ${var.drift_alarm_threshold} records across ${var.drift_alarm_evaluation_periods} consecutive reconciler runs. Run 'python -m reconciler.run --fix' after reviewing the diff, or investigate why sync is failing."
-  namespace           = "CognitoConsistencyPlatform"
+  namespace           = "CognitoConsistencyPlugin"
   metric_name         = "DriftCount"
   dimensions          = { DriftType = "TOTAL" }
   statistic           = "Maximum"

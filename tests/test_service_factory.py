@@ -22,6 +22,51 @@ from common.repositories.postgres import PostgresUserRepository
 from common.repositories.base import UserRepository
 
 
+class _FakeCompleteRepository(UserRepository):
+    """A minimal, complete UserRepository used only to test that
+    service_factory correctly loads and instantiates a custom class --
+    distinct from PostgresUserRepository so isinstance checks are
+    meaningful. Kept local to this test file (registered into
+    sys.modules below) rather than borrowing example_custom_schema.py,
+    since that file is intentionally partial and doesn't satisfy the
+    full interface -- see its module docstring."""
+
+    def __init__(self, connect_fn):
+        self.connect_fn = connect_fn
+
+    def upsert_user(self, cognito_sub, email, username, attributes):
+        return {"id": 1, "inserted": True}
+
+    def get_all_users(self):
+        return []
+
+    def log_sync_event(self, cognito_sub, event_source, status, detail=None):
+        pass
+
+    def enqueue_dead_letter(self, cognito_sub, payload, error):
+        pass
+
+    def fetch_unreplayed_dead_letters(self, max_retry):
+        return []
+
+    def fetch_stuck_dead_letters(self, max_retry):
+        return []
+
+    def mark_dead_letter_replayed(self, dead_letter_id):
+        pass
+
+    def record_dead_letter_failure(self, dead_letter_id, error):
+        pass
+
+
+# Registered into sys.modules so service_factory's importlib-based
+# loader can find it via a dotted path, the same way it would find a
+# real third-party module bundled into the Lambda deployment package.
+_fake_module = type(sys)("test_fake_complete_repo_module")
+_fake_module.FakeCompleteRepository = _FakeCompleteRepository
+sys.modules["test_fake_complete_repo_module"] = _fake_module
+
+
 def test_default_repository_is_postgres_when_no_repository_class_set():
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("REPOSITORY_CLASS", None)
@@ -31,16 +76,12 @@ def test_default_repository_is_postgres_when_no_repository_class_set():
 
 
 def test_custom_repository_class_is_loaded_and_used():
-    # Reuse the shipped example as a stand-in "custom" repository for
-    # this test, since it's a real, importable UserRepository
-    # implementation distinct from PostgresUserRepository.
     with patch.dict(os.environ, {
-        "REPOSITORY_CLASS": "common.repositories.example_custom_schema:ExampleCustomSchemaRepository"
+        "REPOSITORY_CLASS": "test_fake_complete_repo_module:FakeCompleteRepository"
     }):
         service = service_factory.build_sync_service()
 
-    from common.repositories.example_custom_schema import ExampleCustomSchemaRepository
-    assert isinstance(service.repository, ExampleCustomSchemaRepository)
+    assert isinstance(service.repository, _FakeCompleteRepository)
 
 
 def test_custom_repository_with_no_arg_constructor_is_supported():

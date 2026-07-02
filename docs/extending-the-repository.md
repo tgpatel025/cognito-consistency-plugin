@@ -43,14 +43,19 @@ documented in the interface's docstring.
 ## Worked example
 
 [`src/common/repositories/example_custom_schema.py`](../src/common/repositories/example_custom_schema.py)
-implements the interface against a deliberately different, realistic
-pre-existing schema: an integer-PK `users` table with a nullable
-`cognito_id` column (not `cognito_sub` as the primary key), a generic
-`event_log` table reused for audit events instead of a dedicated
-`sync_audit_log`, and a generic `failed_jobs` table reused for dead
-letters. It's meant to be copied and adapted — your real schema will
-differ from the one imagined there, but it demonstrates the *shape* of
-mapping your own columns to the interface's expected keys.
+demonstrates two mapping patterns against a deliberately different,
+realistic pre-existing schema: an integer-PK `users` table with a
+nullable `cognito_id` column (not `cognito_sub` as the primary key,
+requiring column renaming in `get_all_users`), and a generic
+`failed_jobs` table reused for dead letters instead of a dedicated
+table. It implements only `upsert_user`, `get_all_users`, and
+`enqueue_dead_letter` — enough to show both patterns clearly — rather
+than a second complete implementation. The remaining methods would
+follow the same two patterns against the same `failed_jobs` table; see
+the file's docstring for why it stops there instead of duplicating all
+of `postgres.py`'s structure under different names. It's meant to be
+copied and adapted, not run as-is — your real schema will differ from
+the one imagined there.
 
 ## Wiring it in
 

@@ -59,7 +59,7 @@ src/
     repositories/
       base.py               # UserRepository -- the interface everything else depends on
       postgres.py            # reference implementation, matches infra/localstack/schema.sql
-      example_custom_schema.py  # worked example against a differently-shaped, pre-existing schema
+      example_custom_schema.py  # partial worked example: 2 mapping patterns against a different schema
 infra/
   terraform/module/       # reusable Terraform module -- attach to an EXISTING Cognito pool + database (see its README)
   localstack/              # local demo environment (LocalStack + Postgres, no AWS account needed)

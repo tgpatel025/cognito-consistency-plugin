@@ -1,8 +1,8 @@
 """
-Worked example: a UserRepository implementation against a pre-existing
-schema that looks nothing like infra/localstack/schema.sql, to prove the
-interface is actually usable for a different shape, not just a rename of
-the same tables.
+Worked example (partial, not a full implementation) of a UserRepository
+against a pre-existing schema that looks nothing like
+infra/localstack/schema.sql -- proving the interface is genuinely
+schema-agnostic, not just a rename of the same three tables.
 
 Imagined pre-existing schema (a typical "we had a users table before we
 ever heard of this project" shape):
@@ -16,19 +16,8 @@ ever heard of this project" shape):
         updated_at    TIMESTAMPTZ DEFAULT now()
     );
 
-    -- generic event log the app already had for other purposes,
-    -- reused here instead of a dedicated sync_audit_log table
-    CREATE TABLE event_log (
-        id          SERIAL PRIMARY KEY,
-        entity_type TEXT,
-        entity_id   TEXT,
-        event_type  TEXT,
-        outcome     TEXT,
-        notes       TEXT,
-        logged_at   TIMESTAMPTZ DEFAULT now()
-    );
-
-    -- a generic failed-jobs table, reused for dead letters
+    -- a generic failed-jobs table the app already had, reused here for
+    -- dead letters instead of a dedicated sync_dead_letters table
     CREATE TABLE failed_jobs (
         job_id        SERIAL PRIMARY KEY,
         job_type      TEXT,
@@ -41,34 +30,50 @@ ever heard of this project" shape):
         last_attempt_at TIMESTAMPTZ
     );
 
-Notice this implementation:
-  - keys on `cognito_id`, not `cognito_sub` -- the interface doesn't
-    care what the column is called, only that upsert_user/get_all_users
-    behave correctly
-  - reuses generic `event_log` and `failed_jobs` tables instead of
-    creating new sync-specific tables
-  - maps `email_address`/`display_name` to the interface's
-    `email`/`username` keys in get_all_users' return value
+This file implements only upsert_user, get_all_users, and
+enqueue_dead_letter -- enough to demonstrate the two distinct mapping
+patterns that matter:
 
-This file is meant to be copied and adapted, not imported directly --
-your real schema will differ from this imagined one. To use it as
-written against a database that happens to match this exact imagined
-schema, point REPOSITORY_CLASS (see common/service_factory.py) at
-"common.repositories.example_custom_schema:ExampleCustomSchemaRepository".
+  1. Column renaming + a different primary key: `cognito_id` instead of
+     `cognito_sub` as the unique key, `email_address`/`display_name`
+     instead of `email`/`username`. get_all_users() shows the required
+     translation back to the interface's expected dict keys.
+  2. Reusing a generic, already-existing table for a
+     project-specific purpose (`failed_jobs`, filtered by
+     `job_type = 'cognito_sync'`), instead of creating a
+     dedicated table.
+
+The remaining five interface methods (log_sync_event,
+fetch_unreplayed_dead_letters, fetch_stuck_dead_letters,
+mark_dead_letter_replayed, record_dead_letter_failure) follow the exact
+same two patterns applied to the `failed_jobs` table -- see
+postgres.py for their full logic against the reference schema; only the
+table/column names change, not the shape of the SQL. This file stays
+intentionally partial rather than a second complete implementation,
+since a full copy would just duplicate postgres.py's structure with
+different names and create two files that must be kept in sync if the
+interface ever grows a new method.
+
+Not meant to be imported/run as-is -- your real schema will differ from
+this imagined one. Copy and adapt the patterns shown here.
 """
 
 import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 import psycopg2
 import psycopg2.extras
 
-from common.repositories.base import UserRepository
 
+class ExampleCustomSchemaRepositoryPartial:
+    """Partial implementation -- see module docstring. Does not
+    subclass UserRepository directly, since it deliberately omits most
+    of the interface; instantiating a real implementation with missing
+    methods would raise (see tests/test_repository_interface.py for
+    that behavior against complete implementations)."""
 
-class ExampleCustomSchemaRepository(UserRepository):
     def __init__(self, connect_fn):
         self._connect_fn = connect_fn
 
@@ -85,6 +90,8 @@ class ExampleCustomSchemaRepository(UserRepository):
             raise
         finally:
             conn.close()
+
+    # -- Pattern 1: column renaming + a different primary key ------------
 
     def upsert_user(
         self,
@@ -115,11 +122,13 @@ class ExampleCustomSchemaRepository(UserRepository):
     def get_all_users(self) -> list[dict]:
         with self._cursor(commit=False) as cur:
             cur.execute(
-                "SELECT cognito_id, email_address, display_name, metadata, updated_at FROM users WHERE cognito_id IS NOT NULL"
+                "SELECT cognito_id, email_address, display_name, metadata, updated_at "
+                "FROM users WHERE cognito_id IS NOT NULL"
             )
             rows = cur.fetchall()
 
-        # Map this schema's column names to the interface's expected keys.
+        # The interface requires cognito_sub/email/username keys regardless
+        # of what this schema calls them -- translate here, once.
         return [
             {
                 "cognito_sub": row["cognito_id"],
@@ -131,21 +140,7 @@ class ExampleCustomSchemaRepository(UserRepository):
             for row in rows
         ]
 
-    def log_sync_event(
-        self,
-        cognito_sub: str,
-        event_source: str,
-        status: str,
-        detail: Optional[str] = None,
-    ) -> None:
-        with self._cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO event_log (entity_type, entity_id, event_type, outcome, notes, logged_at)
-                VALUES ('user_sync', %s, %s, %s, %s, %s)
-                """,
-                (cognito_sub, event_source, status, detail, datetime.now(timezone.utc)),
-            )
+    # -- Pattern 2: reusing an existing generic table -----------------
 
     def enqueue_dead_letter(self, cognito_sub: str, payload: dict, error: str) -> None:
         with self._cursor() as cur:
@@ -157,68 +152,10 @@ class ExampleCustomSchemaRepository(UserRepository):
                 (cognito_sub, json.dumps(payload), str(error), datetime.now(timezone.utc)),
             )
 
-    def fetch_unreplayed_dead_letters(self, max_retry: int) -> list[dict]:
-        with self._cursor(commit=False) as cur:
-            cur.execute(
-                """
-                SELECT job_id, reference_id, job_data, attempts
-                FROM failed_jobs
-                WHERE job_type = 'cognito_sync' AND resolved = false AND attempts < %s
-                ORDER BY created_at
-                """,
-                (max_retry,),
-            )
-            rows = cur.fetchall()
-
-        return [
-            {
-                "id": row["job_id"],
-                "cognito_sub": row["reference_id"],
-                "payload": row["job_data"],
-                "retry_count": row["attempts"],
-            }
-            for row in rows
-        ]
-
-    def fetch_stuck_dead_letters(self, max_retry: int) -> list[dict]:
-        with self._cursor(commit=False) as cur:
-            cur.execute(
-                """
-                SELECT job_id, reference_id, attempts, error_message, created_at, last_attempt_at
-                FROM failed_jobs
-                WHERE job_type = 'cognito_sync' AND resolved = false AND attempts >= %s
-                ORDER BY created_at
-                """,
-                (max_retry,),
-            )
-            rows = cur.fetchall()
-
-        return [
-            {
-                "id": row["job_id"],
-                "cognito_sub": row["reference_id"],
-                "retry_count": row["attempts"],
-                "last_error": row["error_message"],
-                "occurred_at": row["created_at"],
-                "last_attempted_at": row["last_attempt_at"],
-            }
-            for row in rows
-        ]
-
-    def mark_dead_letter_replayed(self, dead_letter_id: Any) -> None:
-        with self._cursor() as cur:
-            cur.execute(
-                "UPDATE failed_jobs SET resolved = true, last_attempt_at = %s WHERE job_id = %s",
-                (datetime.now(timezone.utc), dead_letter_id),
-            )
-
-    def record_dead_letter_failure(self, dead_letter_id: Any, error: str) -> None:
-        with self._cursor() as cur:
-            cur.execute(
-                """
-                UPDATE failed_jobs
-                SET attempts = attempts + 1, error_message = %s, last_attempt_at = %s
-                WHERE job_id = %s
-                """,
-                (str(error), datetime.now(timezone.utc), dead_letter_id),
-            )
+    # log_sync_event, fetch_unreplayed_dead_letters, fetch_stuck_dead_letters,
+    # mark_dead_letter_replayed, and record_dead_letter_failure would follow
+    # the same two patterns above, querying/updating `failed_jobs` filtered
+    # by job_type = 'cognito_sync' -- omitted here to keep this example
+    # focused on the patterns rather than duplicating postgres.py's full
+    # structure under different names. See postgres.py for their complete
+    # logic against the reference schema.

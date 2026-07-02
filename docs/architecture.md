@@ -279,14 +279,25 @@ handler, the reconciler, and replay now depend on this interface via
 `PostgresUserRepository` or any specific schema directly.
 
 `PostgresUserRepository` (`common/repositories/postgres.py`) is the
-reference implementation, matching the schema this project ships with.
-`ExampleCustomSchemaRepository`
-(`common/repositories/example_custom_schema.py`) is a second, worked
-implementation against a deliberately different, realistic pre-existing
-schema (different table name, integer PK instead of `cognito_sub` as
-key, generic `event_log`/`failed_jobs` tables reused instead of
-dedicated ones) — proving the interface is genuinely schema-agnostic,
-not just a rename of the same three tables.
+reference implementation, matching the schema this project ships with —
+it's the one used by default, so a fresh clone and the LocalStack demo
+work with zero repository code to write.
+
+`ExampleCustomSchemaRepositoryPartial`
+(`common/repositories/example_custom_schema.py`) is a second,
+*intentionally partial* implementation against a deliberately
+different, realistic pre-existing schema (different table name, integer
+PK instead of `cognito_sub` as key, a generic `failed_jobs` table reused
+instead of a dedicated one). It implements only enough methods
+(`upsert_user`, `get_all_users`, `enqueue_dead_letter`) to demonstrate
+the two mapping patterns that matter — column renaming and reusing an
+existing generic table — proving the interface is genuinely
+schema-agnostic, not just a rename of the same three tables. It stays
+partial rather than a second full implementation: a complete copy would
+mostly duplicate `postgres.py`'s structure under different names, and
+two full implementations would need to be kept in sync by hand every
+time the interface grows a new method. See that file's docstring, and
+`docs/extending-the-repository.md`, for the reasoning.
 
 **Where cross-cutting behavior lives**: some logic — like audit-log
 failures never masking a successful upsert (decision on failure

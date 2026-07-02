@@ -1,15 +1,17 @@
-# Extending the repository: using your own database schema
+# Extending the repository: using your own database schema or engine
 
-This project ships with a working Postgres schema
+This project ships with a working Postgres implementation
 ([`infra/localstack/schema.sql`](../infra/localstack/schema.sql):
-`app_users`, `sync_audit_log`, `sync_dead_letters`), but it does not
-require you to adopt it. Every Lambda handler, the reconciler, and
-replay depend on an interface —
-[`UserRepository`](../src/common/repositories/base.py) — not on that
-specific schema or even on Postgres. If you already have a `users`
-table with different columns, a different primary key, or a different
-database engine entirely, you write your own implementation of that
-interface and nothing else in this codebase changes.
+`app_users`, `sync_audit_log`, `sync_dead_letters`) so it runs out of
+the box with zero configuration — but it does not require Postgres, or
+that schema, or any particular database engine at all. Every Lambda
+handler, the reconciler, and replay depend on an interface —
+[`UserRepository`](../src/common/repositories/base.py) — which is just
+Python methods over plain dicts, with no SQL or engine assumptions
+baked in. If you already have a `users` table (or a DynamoDB table, or
+a MongoDB collection) with a completely different shape, you write your
+own implementation of that interface and nothing else in this codebase
+changes.
 
 ## Why this exists
 
@@ -56,6 +58,56 @@ the file's docstring for why it stops there instead of duplicating all
 of `postgres.py`'s structure under different names. It's meant to be
 copied and adapted, not run as-is — your real schema will differ from
 the one imagined there.
+
+## Not just SQL: DynamoDB, MongoDB, or anything else
+
+The interface has no SQL in it — `UserRepository` is just Python methods
+taking and returning plain dicts. Nothing about it assumes a relational
+database. If your existing user store is DynamoDB, MongoDB, or something
+else entirely, the same four steps in "Wiring it in" apply; only the
+method bodies change.
+
+Sketch of what a DynamoDB-backed `upsert_user`/`get_all_users` would
+look like — not a runnable file, just enough to show the shape carries
+over directly:
+
+```python
+class DynamoUserRepository(UserRepository):
+    def __init__(self, table_name):
+        self.table = boto3.resource("dynamodb").Table(table_name)
+
+    def upsert_user(self, cognito_sub, email, username, attributes):
+        # cognito_sub as the partition key -- idempotent by construction,
+        # a put_item with the same key just overwrites
+        self.table.put_item(Item={
+            "pk": cognito_sub, "email": email, "username": username,
+            "attributes": attributes,
+        })
+        return {"id": cognito_sub, "inserted": True}  # Dynamo doesn't
+        # distinguish insert/update without a conditional check; approximate
+        # or add one with ConditionExpression if that distinction matters
+        # to your audit trail.
+
+    def get_all_users(self):
+        # Table.scan() paginates internally here for simplicity; a large
+        # table would want to loop on LastEvaluatedKey.
+        response = self.table.scan()
+        return [
+            {"cognito_sub": item["pk"], "email": item.get("email"),
+             "username": item.get("username"), "attributes": item.get("attributes", {})}
+            for item in response["Items"]
+        ]
+    # ... remaining methods follow the same shape against a dead-letters table/GSI.
+```
+
+This module doesn't ship a complete DynamoDB or MongoDB implementation,
+deliberately: any repository we wrote would encode opinions (single-table
+vs. multi-table Dynamo design, which fields get a GSI, Mongo document
+shape) that are exactly the kind of decision this interface exists to
+leave to you, not re-impose. See
+[`docs/architecture.md`](./architecture.md) decision #9 for why the
+project stops at the interface rather than shipping a repository per
+engine.
 
 ## Wiring it in
 

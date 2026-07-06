@@ -25,7 +25,12 @@ mkdir -p src/examples_postgres
 cp examples/postgres/repository.py examples/postgres/connection.py src/examples_postgres/
 touch src/examples_postgres/__init__.py
 
-echo "Installing Lambda-compatible dependencies into src/..."
+# Exact pins: this installs straight into the Lambda artifact, so an
+# unpinned install would ship whatever PyPI serves that day. Bump deliberately.
+PSYCOPG2_BINARY_VERSION=2.9.12
+BOTO3_VERSION=1.43.39
+
+echo "Installing Lambda-compatible dependencies into src/ (psycopg2-binary==${PSYCOPG2_BINARY_VERSION}, boto3==${BOTO3_VERSION})..."
 pip install \
   --platform manylinux2014_x86_64 \
   --target=src \
@@ -33,7 +38,7 @@ pip install \
   --python-version 3.12 \
   --only-binary=:all: \
   --upgrade \
-  psycopg2-binary boto3
+  "psycopg2-binary==${PSYCOPG2_BINARY_VERSION}" "boto3==${BOTO3_VERSION}"
 
 echo "Done."
 echo "Set REPOSITORY_CLASS=examples_postgres.repository:PostgresUserRepository"

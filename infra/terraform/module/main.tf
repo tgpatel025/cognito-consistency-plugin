@@ -45,6 +45,16 @@ data "archive_file" "post_confirmation" {
   output_path = "${path.module}/build/post_confirmation.zip"
 }
 
+# Explicit log groups (not Lambda's auto-created ones) so retention and
+# encryption are controlled here -- these logs carry Cognito user
+# identifiers and shouldn't live forever.
+resource "aws_cloudwatch_log_group" "post_confirmation" {
+  name              = "/aws/lambda/${var.project_name}-post-confirmation"
+  retention_in_days = var.log_retention_in_days
+  kms_key_id        = var.log_group_kms_key_id != "" ? var.log_group_kms_key_id : null
+  tags              = var.tags
+}
+
 resource "aws_lambda_function" "post_confirmation" {
   function_name    = "${var.project_name}-post-confirmation"
   filename         = data.archive_file.post_confirmation.output_path
@@ -54,6 +64,7 @@ resource "aws_lambda_function" "post_confirmation" {
   timeout          = var.lambda_timeout_seconds
   role             = aws_iam_role.post_confirmation.arn
   tags             = var.tags
+  depends_on       = [aws_cloudwatch_log_group.post_confirmation]
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []
@@ -86,6 +97,13 @@ data "archive_file" "post_authentication" {
   output_path = "${path.module}/build/post_authentication.zip"
 }
 
+resource "aws_cloudwatch_log_group" "post_authentication" {
+  name              = "/aws/lambda/${var.project_name}-post-authentication"
+  retention_in_days = var.log_retention_in_days
+  kms_key_id        = var.log_group_kms_key_id != "" ? var.log_group_kms_key_id : null
+  tags              = var.tags
+}
+
 resource "aws_lambda_function" "post_authentication" {
   function_name    = "${var.project_name}-post-authentication"
   filename         = data.archive_file.post_authentication.output_path
@@ -95,6 +113,7 @@ resource "aws_lambda_function" "post_authentication" {
   timeout          = var.lambda_timeout_seconds
   role             = aws_iam_role.post_authentication.arn
   tags             = var.tags
+  depends_on       = [aws_cloudwatch_log_group.post_authentication]
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []
@@ -127,6 +146,37 @@ data "archive_file" "reconciler" {
   output_path = "${path.module}/build/reconciler.zip"
 }
 
+resource "aws_cloudwatch_log_group" "reconciler" {
+  name              = "/aws/lambda/${var.project_name}-reconciler"
+  retention_in_days = var.log_retention_in_days
+  kms_key_id        = var.log_group_kms_key_id != "" ? var.log_group_kms_key_id : null
+  tags              = var.tags
+}
+
+# Catches reconciler invocations that die before the code runs (throttled/
+# erroring past Lambda's async retries). Without this they vanish: no DB
+# dead-letter row (SyncService never ran) and no alarm (nothing logged).
+resource "aws_sqs_queue" "reconciler_dlq" {
+  name                      = "${var.project_name}-reconciler-dlq"
+  kms_master_key_id         = var.reconciler_dlq_kms_key_id
+  message_retention_seconds = var.reconciler_dlq_message_retention_seconds
+  tags                      = var.tags
+}
+
+data "aws_iam_policy_document" "reconciler_dlq_send" {
+  statement {
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.reconciler_dlq.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "reconciler_dlq" {
+  name   = "${var.project_name}-reconciler-dlq"
+  role   = aws_iam_role.reconciler.id
+  policy = data.aws_iam_policy_document.reconciler_dlq_send.json
+}
+
 resource "aws_lambda_function" "reconciler" {
   function_name    = "${var.project_name}-reconciler"
   filename         = data.archive_file.reconciler.output_path
@@ -136,6 +186,11 @@ resource "aws_lambda_function" "reconciler" {
   timeout          = var.reconciler_timeout_seconds
   role             = aws_iam_role.reconciler.arn
   tags             = var.tags
+  depends_on       = [aws_cloudwatch_log_group.reconciler]
+
+  dead_letter_config {
+    target_arn = aws_sqs_queue.reconciler_dlq.arn
+  }
 
   dynamic "vpc_config" {
     for_each = var.vpc_config != null ? [var.vpc_config] : []

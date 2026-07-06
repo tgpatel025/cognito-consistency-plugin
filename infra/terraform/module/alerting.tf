@@ -10,9 +10,10 @@ locals {
 }
 
 resource "aws_sns_topic" "alerts" {
-  count = var.existing_alerts_topic_arn == "" ? 1 : 0
-  name  = "${var.project_name}-alerts"
-  tags  = var.tags
+  count             = var.existing_alerts_topic_arn == "" ? 1 : 0
+  name              = "${var.project_name}-alerts"
+  kms_master_key_id = var.sns_kms_key_id
+  tags              = var.tags
 }
 
 resource "aws_sns_topic_subscription" "alerts_email" {

@@ -142,3 +142,39 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ---------------------------------------------------------------------------
+# Logging / encryption
+# ---------------------------------------------------------------------------
+variable "log_retention_in_days" {
+  description = "Retention for the Lambda log groups. They carry Cognito user identifiers on sync failures -- don't keep them forever."
+  type        = number
+  default     = 90
+}
+
+variable "log_group_kms_key_id" {
+  description = "Optional KMS key ARN for the Lambda log groups. Empty = CloudWatch's default encryption."
+  type        = string
+  default     = ""
+}
+
+variable "sns_kms_key_id" {
+  description = "KMS key for the alerts SNS topic. Ignored if existing_alerts_topic_arn is set. Defaults to the AWS-managed SNS key."
+  type        = string
+  default     = "alias/aws/sns"
+}
+
+# ---------------------------------------------------------------------------
+# Reconciler dead-letter queue
+# ---------------------------------------------------------------------------
+variable "reconciler_dlq_kms_key_id" {
+  description = "KMS key for the reconciler's dead-letter SQS queue. Defaults to the AWS-managed SQS key."
+  type        = string
+  default     = "alias/aws/sqs"
+}
+
+variable "reconciler_dlq_message_retention_seconds" {
+  description = "How long failed reconciler invocations stay in the DLQ."
+  type        = number
+  default     = 1209600 # 14 days, SQS's maximum
+}

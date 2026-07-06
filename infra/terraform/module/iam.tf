@@ -1,10 +1,5 @@
-# Per-function IAM roles.
-#
-# Previously (see infra/terraform/main.tf, the standalone example) all
-# three Lambdas shared one role with the union of everyone's permissions
-# -- meaning post_confirmation could call cognito-idp:ListUsers even
-# though it has no legitimate reason to. Each function gets its own role
-# here, granted only what it specifically does:
+# Per-function IAM roles -- one role per Lambda. Each role
+# gets only what its function specifically does:
 #
 #   post_confirmation / post_authentication:
 #     - basic Lambda execution (CloudWatch Logs)

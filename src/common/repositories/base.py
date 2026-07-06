@@ -1,51 +1,26 @@
 """
-UserRepository: the contract this project depends on, independent of
-any specific database engine or table schema.
+UserRepository: the storage contract everything else depends on --
+never on Postgres or any specific table shape.
 
-Why this exists
-----------------
-Every other module in this codebase (the Lambda handlers, the
-reconciler, replay) needs to do the same handful of things: upsert a
-user record, log a sync event, list all synced users, and manage
-dead letters. Originally these were raw SQL statements against a fixed
-`app_users` / `sync_audit_log` / `sync_dead_letters` Postgres schema
-baked directly into the core library.
-
-That's fine for a demo, but wrong for something meant to be dropped into
-someone else's existing system: a real adopter already has a `users`
-table, with their own name, columns, primary key, and possibly a
-different database engine entirely (MySQL, DynamoDB, whatever). Forcing
-them to adopt this project's exact schema is the same mistake the
-Terraform module used to make by trying to create its own Cognito pool
-and RDS instance -- see docs/architecture.md decision #8.
-
-The fix, applied the same way: everything else in this codebase depends
-on THIS interface, not on Postgres or on any specific table shape.
-PostgresUserRepository (repositories/postgres.py) is the reference
-implementation, matching the schema in infra/localstack/schema.sql --
-useful to run as-is, or to copy and adapt. A real adopter writes their
-own implementation of this same interface against their existing
-table(s) and engine, and every Lambda handler / the reconciler / replay
-keeps working unmodified, because they only ever call methods on
-UserRepository, never raw SQL.
+Handlers, reconciler, and replay only ever call these methods, so you
+can point this project at your existing users table (any name, columns,
+or engine: MySQL, DynamoDB, whatever) by implementing this interface.
+examples/postgres/repository.py is the reference implementation; see
+docs/extending-the-repository.md for the guide.
 
 Return shapes
 -------------
-Methods that return user records return plain dicts with these keys,
-regardless of the underlying schema's actual column names -- the
-repository implementation is responsible for mapping its own columns to
-these names:
+User records (implementation maps its own columns to these keys):
     {"cognito_sub": str, "email": str | None, "username": str | None,
      "attributes": dict, "last_synced_at": datetime}
 
-Dead-letter records use:
+Dead-letter records:
     {"id": Any, "cognito_sub": str, "payload": dict, "retry_count": int,
      "last_error": str | None, "occurred_at": datetime}
 
-"id" is intentionally typed as Any -- it's an opaque handle the
-repository hands back and later accepts (e.g. mark_replayed(id)); the
-rest of the codebase never inspects or constructs it, so it can be an
-int, a UUID, a composite key, whatever the underlying store uses.
+"id" is Any on purpose: an opaque handle the repository hands back and
+later accepts (mark_replayed(id)). Nothing else inspects it -- int,
+UUID, composite key, whatever your store uses.
 """
 
 from abc import ABC, abstractmethod
@@ -54,9 +29,8 @@ from typing import Any, Optional
 
 class UserRepository(ABC):
     """Implement this against your own database/schema. See
-    repositories/postgres.py for the reference implementation and
-    repositories/README.md (docs/extending-the-repository.md at the
-    repo root) for a guide to writing your own."""
+    examples/postgres/repository.py for the reference implementation and
+    docs/extending-the-repository.md for a guide to writing your own."""
 
     # -- Primary sync path -------------------------------------------------
 
@@ -68,26 +42,21 @@ class UserRepository(ABC):
         username: Optional[str],
         attributes: dict,
     ) -> dict:
-        """Create or update the user record for this cognito_sub.
+        """Create or update the record for this cognito_sub.
 
-        Must be idempotent: calling this twice with the same cognito_sub
-        and data must not create a duplicate record or raise -- Cognito's
-        own retry behavior and the reconciler's replay path both depend
-        on this.
+        Must be idempotent -- same sub + data twice must not duplicate or
+        raise; Cognito retries and replay both depend on it.
 
-        Returns a dict with at least {"id": <opaque id>, "inserted": bool}
-        -- "inserted" distinguishes a new record from an update, used
-        for audit logging detail.
+        Returns at least {"id": <opaque id>, "inserted": bool} ("inserted"
+        distinguishes new vs update, for audit detail).
         """
         raise NotImplementedError
 
     @abstractmethod
     def get_all_users(self) -> list[dict]:
-        """Return every synced user record, in the shape described in
-        this module's docstring. Used by the reconciler to diff against
-        Cognito's user list -- for very large user pools, an
-        implementation may want to paginate internally, but this
-        interface's contract is that the full set is returned."""
+        """Return every synced user record (shape: see module docstring).
+        Used by the reconciler to diff against Cognito. Paginate
+        internally if you must -- the contract is the full set comes back."""
         raise NotImplementedError
 
     # -- Audit trail ---------------------------------------------------
@@ -100,23 +69,18 @@ class UserRepository(ABC):
         status: str,
         detail: Optional[str] = None,
     ) -> None:
-        """Append-only audit record. Implementations should make this
-        append-only (never update/delete existing rows) since it's the
-        compliance trail. Callers (specifically SyncService, see
-        common/sync_service.py) treat a raised exception here as
-        recoverable/non-fatal -- the audit write must never be allowed
-        to mask or roll back a successful upsert_user call."""
+        """Append-only audit record -- never update/delete rows; it's the
+        compliance trail. SyncService treats exceptions here as non-fatal:
+        an audit failure must never mask a successful upsert_user."""
         raise NotImplementedError
 
     # -- Dead-letter / replay -------------------------------------------
 
     @abstractmethod
     def enqueue_dead_letter(self, cognito_sub: str, payload: dict, error: str) -> None:
-        """Record a failed sync attempt for later replay. `payload` is
-        opaque to the repository -- store and return it unchanged.
-        Callers (SyncService.sync_or_dead_letter) write it as
-        {"username": str | None, "attributes": dict}, and replay.py reads
-        it back in that same shape to reconstruct the sync_user() call."""
+        """Record a failed sync for later replay. `payload` is opaque --
+        store and return it unchanged. (SyncService writes
+        {"username": ..., "attributes": ...}; replay.py reads it back.)"""
         raise NotImplementedError
 
     @abstractmethod

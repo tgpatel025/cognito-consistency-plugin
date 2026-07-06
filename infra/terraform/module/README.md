@@ -1,10 +1,9 @@
 # Cognito Consistency Plugin — Terraform module
 
 Adds identity sync, drift reconciliation, and alerting on top of an
-**existing** Cognito User Pool and **existing** database. This module
-does not create a User Pool, a database, or a VPC — see
-[`docs/architecture.md`](../../../docs/architecture.md) in the repo root
-for why.
+**existing** Cognito User Pool and **existing** database. Does not
+create a User Pool, a database, or a VPC — see
+[`docs/architecture.md`](../../../docs/architecture.md) for why.
 
 ## What this creates
 
@@ -31,7 +30,7 @@ for why.
 
 ```hcl
 module "cognito_consistency" {
-  source = "github.com/tgpatel025/cognito-consistency-platform//infra/terraform/module"
+  source = "github.com/tgpatel025/cognito-consistency-plugin//infra/terraform/module"
 
   project_name = "myapp"
 
@@ -61,9 +60,7 @@ module "cognito_consistency" {
 }
 
 # Wire the module's Lambdas as this pool's triggers. This lives in YOUR
-# root module (not inside this one), because lambda_config is an
-# attribute of a resource you already own -- see the note below on why
-# this can't be done inside the module itself.
+# root module -- see the note below on why.
 resource "aws_cognito_user_pool" "main" {
   # ... your existing pool config ...
 
@@ -76,28 +73,21 @@ resource "aws_cognito_user_pool" "main" {
 
 ### Why `lambda_config` isn't set inside this module
 
-`aws_cognito_user_pool.lambda_config` is an attribute of the pool
-resource itself, and Terraform's `aws_cognito_user_pool` resource
-requires the **entire pool** to be declared in one resource block —
-there's no separate "attach a trigger to an existing pool" resource.
-Since this module doesn't own your pool resource, it can't set an
-attribute on it. You attach `module.cognito_consistency.post_confirmation_function_arn`
-to your own pool's `lambda_config` yourself, as shown above.
+`lambda_config` is an attribute of the `aws_cognito_user_pool` resource
+itself; Terraform has no separate "attach a trigger to an existing pool"
+resource. Since this module doesn't own your pool resource, you attach
+the module's function ARNs to your own pool's `lambda_config`, as shown
+above.
 
-**A note on cycles**: if you were creating the pool AND calling this
-module in the same root module, be aware that scoping the reconciler's
-IAM policy to `cognito_user_pool_arn` (which happens unconditionally in
-[`iam.tf`](./iam.tf)) means the module depends on the pool's ARN, while
-the pool's `lambda_config` depends on the module's Lambda ARNs — a
-genuine circular reference if both are created from scratch together.
-This isn't a problem in the normal case this module is designed for
-(attaching to a pool that **already exists**, so its ARN is already a
-known value, not something being created in the same apply). It only
-becomes a problem if you try to provision a brand-new pool and this
-module in one shot — which is why this repo does not ship a "create
-everything from scratch" Terraform example; use
-[`infra/localstack`](../localstack) instead if you want to see the whole
-system running without any pre-existing AWS resources.
+**A note on cycles**: the reconciler's IAM policy is scoped to
+`cognito_user_pool_arn` (unconditionally, in [`iam.tf`](./iam.tf)), so
+the module depends on the pool's ARN while the pool's `lambda_config`
+depends on the module's Lambda ARNs. Attaching to an **existing** pool
+is fine — its ARN is a known value. Creating a brand-new pool and this
+module in one apply is a genuine circular reference, which is why this
+repo ships no "create everything from scratch" example. Use
+[`infra/localstack`](../localstack) to run the whole system without
+pre-existing AWS resources.
 
 ## Least-privilege IAM
 
@@ -109,7 +99,9 @@ Each Lambda gets its own role (not a shared one):
 | `post_authentication` | Same as above |
 | `reconciler` | Same as above, plus `cognito-idp:ListUsers` scoped to exactly `cognito_user_pool_arn`, plus `cloudwatch:PutMetricData` (AWS doesn't support resource-level scoping for this action) |
 
-All three roles also get `additional_iam_policy_json` attached if you set it — this is where any permissions your repository needs beyond (or instead of) Secrets Manager go.
+All three roles also get `additional_iam_policy_json` if you set it —
+put any permissions your repository needs beyond (or instead of) Secrets
+Manager there.
 
 See [`iam.tf`](./iam.tf) for the exact policy documents.
 

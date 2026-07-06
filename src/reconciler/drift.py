@@ -3,7 +3,7 @@ Reconciliation engine.
 
 Compares the Cognito User Pool (source of truth for identity) against the
 application database (source of truth for business data) and classifies
-every discrepancy into one of four drift categories:
+every discrepancy into one of three drift categories:
 
   MISSING_IN_DB       - user exists in Cognito, no row in app_users
                          (e.g. the post_confirmation trigger failed silently)
@@ -14,14 +14,14 @@ every discrepancy into one of four drift categories:
                          or any Cognito attribute -- custom or standard,
                          including e.g. email_verified -- was changed
                          out-of-band and never synced)
-  IN_SYNC              - no action needed
 
-This module is intentionally side-effect-free for the "detect" phase --
-`find_drift()` only reads. Fixing drift is a separate, explicit step
-(see reconcile.py / replay.py) so the tool never silently overwrites data
-without an operator being able to see the diff first. That separation is
-the main design decision worth defending in an interview: detection and
-remediation are different trust levels and should not be coupled.
+A user with no discrepancy produces no record -- there is no "in sync"
+drift type.
+
+Detection is side-effect-free: find_drift() only reads. Fixing is a
+separate, explicit step (run.py / replay.py) so nothing gets overwritten
+before an operator can see the diff -- detection and remediation are
+different trust levels.
 """
 
 import logging

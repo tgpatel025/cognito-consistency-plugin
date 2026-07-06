@@ -1,25 +1,12 @@
 """
-Entry point used when the reconciler runs as a scheduled Lambda
-(triggered by EventBridge every 15 minutes) rather than as a CLI.
+Reconciler as a scheduled Lambda (EventBridge) -- thin wrapper around
+run.py so local/CI/AWS all share one code path. Storage via SyncService,
+never a specific database (docs/extending-the-repository.md).
 
-Kept as a thin wrapper around run.py's logic so the same reconciliation
-code path is used whether it's invoked locally, in CI, or in AWS.
-
-Storage: depends on SyncService, not on any specific database directly
--- see docs/extending-the-repository.md.
-
-Alerting
---------
-Drift counts are published as a CloudWatch custom metric
-(namespace: CognitoConsistencyPlugin, metric: DriftCount, broken down
-by drift type via a dimension). This is what makes drift *alarmable*
-rather than something a human has to remember to check logs for --
-see infra/terraform/module/alerting.tf for the CloudWatch Alarm + SNS
-topic that watches this metric.
-
-A metric was chosen over parsing log lines because it's structured,
-cheap, and gives you a real time series to graph (e.g. "drift count over
-the last 7 days") rather than just a threshold trip.
+Drift counts publish as a CloudWatch metric (CognitoConsistencyPlugin /
+DriftCount, dimensioned by drift type) so drift is *alarmable* instead
+of something a human remembers to grep logs for -- alerting.tf watches
+it. Metric over log-parsing: structured, cheap, graphable time series.
 """
 
 import os
@@ -38,14 +25,9 @@ METRIC_NAMESPACE = "CognitoConsistencyPlugin"
 
 
 def publish_drift_metrics(summary: dict):
-    """Publish one metric datapoint per drift type plus a total, so
-    CloudWatch can alarm on any specific type or on overall drift.
-
-    The client is created here, not at module import time, so this
-    module can be imported in local/test environments without an AWS
-    region configured -- boto3.client() raises NoRegionError immediately
-    if a region can't be resolved, and that would happen at import time
-    for every caller if the client were module-level."""
+    """One datapoint per drift type + a total, so CloudWatch can alarm
+    on either. Client created here (not module level) so importing this
+    module without an AWS region configured doesn't NoRegionError."""
     cloudwatch = boto3.client("cloudwatch")
 
     metric_data = [

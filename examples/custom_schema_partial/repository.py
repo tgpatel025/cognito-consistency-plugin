@@ -1,11 +1,9 @@
 """
-Worked example (partial, not a full implementation) of a UserRepository
-against a pre-existing schema that looks nothing like the Postgres
-example's schema (examples/postgres/schema.sql) -- proving the interface
-is genuinely schema-agnostic, not just a rename of the same three
-tables.
+Worked example (partial) of a UserRepository against a pre-existing
+schema that looks nothing like the Postgres example's -- proving the
+interface is schema-agnostic, not a rename of the same three tables.
 
-Imagined pre-existing schema (a typical "we had a users table before we
+Imagined pre-existing schema (typical "we had a users table before we
 ever heard of this project" shape):
 
     CREATE TABLE users (
@@ -31,39 +29,23 @@ ever heard of this project" shape):
         last_attempt_at TIMESTAMPTZ
     );
 
-This file implements only upsert_user, get_all_users, and
-enqueue_dead_letter -- enough to demonstrate the two distinct mapping
-patterns that matter:
+Implements only upsert_user, get_all_users, and enqueue_dead_letter --
+the two mapping patterns that matter:
 
-  1. Column renaming + a different primary key: `cognito_id` instead of
-     `cognito_sub` as the unique key, `email_address`/`display_name`
-     instead of `email`/`username`. get_all_users() shows the required
-     translation back to the interface's expected dict keys.
-  2. Reusing a generic, already-existing table for a
-     project-specific purpose (`failed_jobs`, filtered by
-     `job_type = 'cognito_sync'`), instead of creating a
-     dedicated table.
+  1. Column renaming + different primary key: `cognito_id` as the unique
+     key, `email_address`/`display_name` for `email`/`username`;
+     get_all_users() translates back to the interface's dict keys.
+  2. Reusing a generic existing table (`failed_jobs`, filtered by
+     `job_type = 'cognito_sync'`) instead of a dedicated one.
 
-The remaining five interface methods (log_sync_event,
-fetch_unreplayed_dead_letters, fetch_stuck_dead_letters,
-mark_dead_letter_replayed, record_dead_letter_failure) follow the exact
-same two patterns applied to the `failed_jobs` table -- see
-examples/postgres/repository.py for their full logic against that
-example's schema; only the table/column names change, not the shape of
-the SQL. This file stays intentionally partial rather than a second
-complete implementation, since a full copy would just duplicate that
-file's structure with different names and create two files that must be
-kept in sync if the interface ever grows a new method.
+The other five interface methods are the same two patterns applied to
+`failed_jobs` -- see examples/postgres/repository.py for full logic;
+only table/column names change. Kept partial on purpose: a complete
+copy would just be that file with different names, drifting out of sync.
 
-Not meant to be imported/run as-is -- your real schema will differ from
-this imagined one. Copy and adapt the patterns shown here.
-
-This example also demonstrates that its own connection setup doesn't
-have to look like the Postgres example's connection.py at all -- see
-docs/extending-the-repository.md's "Constructor signature" section for
-why the connection/credential logic is entirely up to the repository
-author, not something the core library provides or expects a particular
-shape for.
+Not meant to run as-is -- your real schema will differ. Copy the
+patterns. Connection setup is also entirely yours (see
+docs/extending-the-repository.md, "Constructor signature").
 """
 
 import json

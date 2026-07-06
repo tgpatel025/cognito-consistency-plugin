@@ -1,41 +1,19 @@
 """
 Builds the SyncService used by the Lambda handlers and reconciler.
 
-There is no default repository. The core library has no database driver
-dependencies and no opinion on which database or schema you use -- see
-docs/extending-the-repository.md. You must implement UserRepository
-(common/repositories/base.py) and set the REPOSITORY_CLASS environment
-variable to "module.path:ClassName" pointing at it. If REPOSITORY_CLASS
-is not set, this raises immediately and clearly at startup rather than
-silently falling back to some default database you may not have
-provisioned or even want.
+No default repository: implement UserRepository (common/repositories/
+base.py) and set REPOSITORY_CLASS="module.path:ClassName" pointing at
+it. Unset -> raises at startup, loudly, instead of falling back to a
+database you may not have.
 
-Example:
     REPOSITORY_CLASS="my_company.identity_repo:MySQLUserRepository"
 
-The referenced class must be importable from the Lambda's package root
-(i.e. bundled into the deployment zip alongside src/) and must be
-constructible with no arguments -- see "Connection ownership" below.
-
-Connection ownership
----------------------
-Earlier versions of this factory passed a shared connect_fn into every
-repository's constructor, which meant the core library had to own a
-"how to connect" convention -- and in practice, that meant owning a
-database driver (psycopg2), even for repositories that don't use
-Postgres or SQL at all. That's exactly the kind of opinion this project
-is trying not to impose (see docs/architecture.md decision #9).
-
-Now the factory does nothing but import your class and instantiate it
-with zero arguments. Your repository is responsible for its own
-connection setup, however that looks for your database -- reading env
-vars, calling Secrets Manager, opening a connection pool, obtaining a
-DynamoDB resource, etc. See examples/postgres/repository.py and
-examples/postgres/connection.py for one way to structure this (a
-repository that accepts a connect_fn callable in its own constructor,
-imported and wired up from within your own REPOSITORY_CLASS-referenced
-module, not by this factory) -- but that pattern is a choice your
-repository makes, not a contract this factory enforces.
+Your class must be bundled in the deployment zip alongside src/ and
+constructible with no arguments -- the factory just imports and
+instantiates it. Connection setup (env vars, Secrets Manager, pools,
+DynamoDB resources...) is entirely the repository's own business; see
+examples/postgres/ for one way to structure it, and
+docs/extending-the-repository.md for the guide.
 """
 
 import os

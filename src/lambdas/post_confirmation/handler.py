@@ -1,28 +1,16 @@
 """
-Cognito Post Confirmation trigger.
+Cognito Post Confirmation trigger -- fires once after sign-up (or
+forgot-password) confirmation; creates the app-side user record.
 
-Fires once, after a user confirms sign-up (or a forgot-password confirmation).
-This is where the application-side user record is first created.
+Failure handling: Cognito calls this synchronously, and raising would
+block the user's sign-up. So we never raise -- on failure we dead-letter
+the event for replay, log a 'failure' audit event, and return the event
+unmodified. A DB outage never blocks sign-up; it creates drift, which
+is what the reconciler is for.
 
-Failure handling
------------------
-Cognito invokes this trigger synchronously and expects a response within
-5 seconds. If we raise an exception here, Cognito will NOT complete the
-user's sign-up -- so we deliberately never raise. Instead, on failure we:
-  1. write a dead-letter record for the reconciler to pick up and replay
-  2. log a 'failure' audit event
-  3. return the event unmodified so Cognito's confirmation flow proceeds
-
-This means a DB outage never blocks user sign-up, but it does create
-drift -- which is exactly what the reconciliation job is for.
-
-Storage: this handler depends on SyncService (common/sync_service.py),
-never on any specific database or schema directly. Which storage
-backend SyncService uses is decided by common/service_factory.py --
-there is no default; you must implement UserRepository and point the
-REPOSITORY_CLASS env var at it (examples/postgres/repository.py is a
-ready-to-use reference implementation, not a default). See
-docs/extending-the-repository.md.
+Storage via SyncService, never a specific database. No default backend:
+implement UserRepository + set REPOSITORY_CLASS (see
+docs/extending-the-repository.md; examples/postgres is the reference).
 """
 
 import logging

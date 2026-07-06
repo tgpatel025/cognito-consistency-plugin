@@ -1,33 +1,19 @@
 """
 Replay failed sync events from the dead-letter store.
 
-This is the "Replay & Recovery" capability: when a Lambda trigger fails
-to write to the database (outage, transient network error, schema
-mismatch), the event is captured as a dead letter rather than lost.
-This script retries those events.
+Two kinds of dead letter:
+  - Transient (DB was down): replay succeeds once it's back.
+  - Permanent (bad payload, e.g. null email vs NOT NULL): fails
+    identically forever -- a poison pill without a retry limit.
 
-Two categories of dead letter behave very differently on replay:
-  - Transient (DB was briefly down): replaying succeeds as soon as the
-    DB is back, no special handling needed.
-  - Permanent (the payload itself is bad -- e.g. a null email hitting a
-    NOT NULL constraint): replaying will fail identically every time,
-    forever, unless something intervenes. Without a retry limit, this
-    becomes a silent "poison pill" that fails quietly on every scheduled
-    replay run indefinitely.
-
-To distinguish these, every failed replay attempt increments
-retry_count and records last_error. Entries exceeding
-MAX_RETRY_ATTEMPTS are skipped by default (still visible via --report)
-rather than retried forever.
-
-Storage: depends on SyncService, not on any specific database directly
--- see docs/extending-the-repository.md for how to point this at your
-own schema.
+So every failed replay bumps retry_count + records last_error; entries
+past MAX_RETRY_ATTEMPTS are skipped (visible via --report), not retried
+forever. Storage via SyncService (docs/extending-the-repository.md).
 
 Usage:
-    python -m reconciler.replay              # replay all eligible unreplayed entries
+    python -m reconciler.replay              # replay eligible entries
     python -m reconciler.replay --dry-run    # show what would be replayed
-    python -m reconciler.replay --report     # show stuck (max-retries-exceeded) entries
+    python -m reconciler.replay --report     # show stuck entries
 """
 
 import argparse
@@ -65,8 +51,10 @@ def replay_all(sync_service, dry_run=False):
             sync_service.mark_dead_letter_replayed(entry["id"])
             replayed += 1
         except Exception as exc:
+            # Type only -- full message (may embed PII) goes to last_error
+            # via record_dead_letter_failure, not CloudWatch.
             logger.error("Replay failed for %s (attempt %d): %s",
-                         entry["cognito_sub"], entry["retry_count"] + 1, exc)
+                         entry["cognito_sub"], entry["retry_count"] + 1, type(exc).__name__)
             sync_service.record_dead_letter_failure(entry["id"], exc)
             failed += 1
 

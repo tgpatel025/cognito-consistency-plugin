@@ -1,24 +1,11 @@
 """
-SyncService: orchestration logic that sits on top of any UserRepository
-implementation.
+SyncService: orchestration on top of any UserRepository.
 
-Why this layer exists, separate from the repository interface
----------------------------------------------------------------
-Some behavior in this codebase is a property of HOW syncing should work,
-not of any particular storage engine -- it shouldn't have to be
-re-implemented correctly by every custom UserRepository someone writes.
-The clearest example: audit-log failures must never mask or roll back a
-successful user upsert (see docs/architecture.md decision on failure
-isolation). That's an orchestration rule, not a SQL detail, so it lives
-here once, wrapping whatever repository is configured, rather than
-inside PostgresUserRepository where every custom repository would have
-to remember to reimplement it correctly.
-
-This is the single entry point the Lambda handlers and reconciler
-actually call. They depend on SyncService, which depends on
-UserRepository (the interface) -- never on a concrete repository class
-directly. Swapping storage is done by constructing SyncService with a
-different repository, not by changing any calling code.
+Rules about HOW syncing works (e.g. an audit-log failure must never
+mask a successful upsert -- see docs/architecture.md) live here once,
+instead of being re-implemented by every custom repository. Handlers
+and the reconciler call this, never a concrete repository -- swap
+storage by constructing SyncService with a different repository.
 """
 
 import logging
@@ -34,9 +21,8 @@ class SyncService:
         self.repository = repository
 
     def sync_user(self, cognito_sub, email, username, attributes, event_source) -> dict:
-        """Upsert a user and record the audit event. The audit write's
-        success or failure never affects this method's return value or
-        whether it raises -- see module docstring."""
+        """Upsert a user + record the audit event. The audit write never
+        affects the return value or whether this raises."""
         result = self.repository.upsert_user(
             cognito_sub=cognito_sub, email=email, username=username, attributes=attributes,
         )
@@ -50,25 +36,25 @@ class SyncService:
                 detail=detail,
             )
         except Exception as exc:
+            # Exception type only -- str(exc) from DB drivers can embed
+            # row values (PII), and CloudWatch is wider-access than the DB.
             logger.error(
-                "User upsert for %s succeeded, but audit log write failed: %s. "
+                "User upsert for %s succeeded, but audit log write failed (%s). "
                 "This event will not appear in the audit trail.",
                 cognito_sub,
-                exc,
+                type(exc).__name__,
             )
 
         return result
 
     def sync_or_dead_letter(self, cognito_sub, email, username, attributes, event_source) -> bool:
-        """Sync a user; on failure, dead-letter it and record a failure
-        audit event instead of raising. Callers that must never propagate
-        a sync failure (the Lambda triggers) should call this instead of
-        sync_user directly. Returns True on success, False on failure.
+        """Sync a user; on failure, dead-letter it instead of raising.
+        For callers that must never propagate a sync failure (the Lambda
+        triggers). Returns True on success, False on failure.
 
-        The dead-letter payload keeps username alongside attributes
-        (rather than just attributes) since username is not itself a
-        Cognito attribute -- replay needs it back to call sync_user
-        with the same arguments used here."""
+        Payload keeps username alongside attributes -- username isn't a
+        Cognito attribute, and replay needs it to rebuild the sync_user
+        call."""
         try:
             self.sync_user(
                 cognito_sub=cognito_sub,
@@ -79,7 +65,9 @@ class SyncService:
             )
             return True
         except Exception as exc:
-            logger.error("Failed to sync user %s via %s: %s", cognito_sub, event_source, exc)
+            # Type only here; full error text lands in the dead-letter row
+            # below, the narrower-access sink for that detail.
+            logger.error("Failed to sync user %s via %s (%s)", cognito_sub, event_source, type(exc).__name__)
             try:
                 self.enqueue_dead_letter(
                     cognito_sub=cognito_sub,

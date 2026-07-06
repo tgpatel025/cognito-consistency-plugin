@@ -110,8 +110,11 @@ def main():
             try:
                 entry["action_taken"] = apply_fix(record, sync_service)
             except Exception as exc:
-                logger.error("Failed to apply fix for %s: %s", record.cognito_sub, exc)
-                entry["action_taken"] = f"fix failed: {exc}"
+                # Type only -- str(exc) can embed PII, and this hits both
+                # CloudWatch and stdout/--json. Full detail lives in the
+                # sync_events/dead-letter tables.
+                logger.error("Failed to apply fix for %s: %s", record.cognito_sub, type(exc).__name__)
+                entry["action_taken"] = f"fix failed: {type(exc).__name__}"
         results.append(entry)
 
     output = {"summary": summary, "records": results}

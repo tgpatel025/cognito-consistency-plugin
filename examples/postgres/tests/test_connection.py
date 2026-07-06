@@ -2,7 +2,8 @@
 Tests for the Postgres example's connection.get_connection() -- its two
 credential paths:
   1. DB_SECRET_ARN set -> fetch from Secrets Manager
-  2. DB_SECRET_ARN unset -> plaintext env vars (local/LocalStack path)
+  2. DB_SECRET_ARN unset + ALLOW_PLAINTEXT_DB_CREDS=1 -> plaintext env
+     vars (local/LocalStack path); without the flag it raises.
 
 This test lives alongside the example (examples/postgres/tests/) rather
 than in the core tests/ directory, since connection.py is entirely
@@ -30,8 +31,9 @@ def setup_function():
     connection._fetch_secret.cache_clear()
 
 
-def test_uses_plaintext_env_vars_when_no_secret_arn_set():
+def test_uses_plaintext_env_vars_when_no_secret_arn_set_and_explicitly_allowed():
     env = {
+        "ALLOW_PLAINTEXT_DB_CREDS": "1",
         "DB_HOST": "localhost",
         "DB_PORT": "5432",
         "DB_NAME": "identity_platform",
@@ -47,6 +49,20 @@ def test_uses_plaintext_env_vars_when_no_secret_arn_set():
         host="localhost", port="5432", dbname="identity_platform",
         user="postgres", password="postgres", connect_timeout=5,
     )
+
+
+def test_raises_when_no_secret_arn_and_plaintext_fallback_not_allowed():
+    with patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("DB_SECRET_ARN", None)
+        os.environ.pop("ALLOW_PLAINTEXT_DB_CREDS", None)
+        with patch("psycopg2.connect") as mock_connect:
+            try:
+                connection.get_connection()
+                assert False, "expected RuntimeError"
+            except RuntimeError:
+                pass
+
+    mock_connect.assert_not_called()
 
 
 def test_uses_secrets_manager_when_secret_arn_set():
